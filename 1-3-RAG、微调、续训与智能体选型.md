@@ -759,7 +759,7 @@ Function Calling 和 MCP 不是同一个东西，但经常会一起出现。
 
 MCP 本质上是对“工具接入”做了进一步标准化。除了 Tools，它还支持 Resources 和 Prompts。
 
-最常用的是 **Tools**，但它的设计范围比传统 Function Calling 更大。
+最常用的是 **Tools**，但它的覆盖范围比传统 Function Calling 更大。
 
 **MCP 使用理解（以 Cherry Studio + 天气为例）**
 

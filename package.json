@@ -6,7 +6,7 @@
   "private": true,
   "scripts": {
     "prepare": "husky",
-    "serve": "docsify serve . --open"
+    "serve": "node scripts/serve-docs.cjs"
   },
   "devDependencies": {
     "docsify-cli": "^4.4.3",

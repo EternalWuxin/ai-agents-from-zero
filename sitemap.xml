@@ -37,6 +37,14 @@
     <priority>0.8</priority>
   </url>
   <url>
+    <loc>https://didilili.github.io/ai-agents-from-zero/#/7-企业级大模型部署</loc>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://didilili.github.io/ai-agents-from-zero/#/8-Docker快速入门与Dify部署排障</loc>
+    <priority>0.8</priority>
+  </url>
+  <url>
     <loc>https://didilili.github.io/ai-agents-from-zero/#/9-LangChain概述与架构</loc>
     <priority>0.8</priority>
   </url>
@@ -113,6 +121,30 @@
     <priority>0.8</priority>
   </url>
   <url>
+    <loc>https://didilili.github.io/ai-agents-from-zero/#/28-大模型微调概述与整体流程</loc>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://didilili.github.io/ai-agents-from-zero/#/29-微调数据准备与对话模板</loc>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://didilili.github.io/ai-agents-from-zero/#/30-模型训练原理与高效微调</loc>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://didilili.github.io/ai-agents-from-zero/#/31-LLaMA-Factory环境搭建与微调实战</loc>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://didilili.github.io/ai-agents-from-zero/#/32-微调效果评估与模型部署</loc>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://didilili.github.io/ai-agents-from-zero/#/33-微调显存优化与多卡训练</loc>
+    <priority>0.8</priority>
+  </url>
+  <url>
     <loc>https://didilili.github.io/ai-agents-from-zero/#/案例与源码-1-Coze&amp;Dify工作流智能体/3.1-Coze案例：一键生成行业调研PPT/3.1-一键生成行业调研PPT</loc>
     <priority>0.8</priority>
   </url>
@@ -141,7 +173,7 @@
     <priority>0.8</priority>
   </url>
   <url>
-    <loc>https://didilili.github.io/ai-agents-from-zero/#/案例与源码-1-Coze&amp;Dify工作流智能体/3.8-Coze案例：商品评论分析/3.8-商品评论分析-商品评论分析-Coze</loc>
+    <loc>https://didilili.github.io/ai-agents-from-zero/#/案例与源码-1-Coze&amp;Dify工作流智能体/3.8-Coze案例：商品评论分析/3.8-商品评论分析-Coze</loc>
     <priority>0.8</priority>
   </url>
   <url>
@@ -150,10 +182,6 @@
   </url>
   <url>
     <loc>https://didilili.github.io/ai-agents-from-zero/#/案例与源码-1-Coze&amp;Dify工作流智能体/3.10-Coze案例：商品营销卖点提炼/3.10-商品营销卖点提炼-Coze</loc>
-    <priority>0.8</priority>
-  </url>
-  <url>
-    <loc>https://didilili.github.io/ai-agents-from-zero/#/案例与源码-2-LangChain框架/10-rag/docloads/assets/sample</loc>
     <priority>0.8</priority>
   </url>
   <url>
@@ -249,6 +277,10 @@
     <priority>0.8</priority>
   </url>
   <url>
+    <loc>https://didilili.github.io/ai-agents-from-zero/#/实战项目-深度研搜/0-前言</loc>
+    <priority>0.8</priority>
+  </url>
+  <url>
     <loc>https://didilili.github.io/ai-agents-from-zero/#/实战项目-深度研搜/1-DeepAgents基础与核心概念</loc>
     <priority>0.8</priority>
   </url>
@@ -294,6 +326,14 @@
   </url>
   <url>
     <loc>https://didilili.github.io/ai-agents-from-zero/#/实战项目-深度研搜/12-RAGFlow子智能体与知识库准备</loc>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://didilili.github.io/ai-agents-from-zero/#/实战项目-深度研搜/13-主智能体搭建与异步执行</loc>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://didilili.github.io/ai-agents-from-zero/#/实战项目-深度研搜/14-FastAPI接口与项目闭环</loc>
     <priority>0.8</priority>
   </url>
   <url>

@@ -570,12 +570,12 @@ workflow:
                 en_US: secret key for signing
                 ja_JP: secret key for signing
                 pt_BR: secret key for signing
-                zh_Hans: 加签秘钥
+                zh_Hans: 加签密钥
               label:
                 en_US: secret key for signing
                 ja_JP: secret key for signing
                 pt_BR: secret key for signing
-                zh_Hans: 加签秘钥
+                zh_Hans: 加签密钥
               llm_description: ""
               max: null
               min: null
@@ -668,7 +668,7 @@ workflow:
               value: text
             sign_secret:
               type: mixed
-              value: SECa02e0b4f6b3b40b590530436340998eaf82004d386596743a7ce839049882dc9
+              value: SEC_YOUR_DINGTALK_SIGNING_SECRET
           tool_description: 通过钉钉的群机器人webhook发送群消息
           tool_label: 发送群消息
           tool_name: dingtalk_group_bot
@@ -731,12 +731,12 @@ workflow:
                 en_US: secret key for signing
                 ja_JP: secret key for signing
                 pt_BR: secret key for signing
-                zh_Hans: 加签秘钥
+                zh_Hans: 加签密钥
               label:
                 en_US: secret key for signing
                 ja_JP: secret key for signing
                 pt_BR: secret key for signing
-                zh_Hans: 加签秘钥
+                zh_Hans: 加签密钥
               llm_description: ""
               max: null
               min: null
@@ -829,7 +829,7 @@ workflow:
               value: text
             sign_secret:
               type: mixed
-              value: SECa02e0b4f6b3b40b590530436340998eaf82004d386596743a7ce839049882dc9
+              value: SEC_YOUR_DINGTALK_SIGNING_SECRET
           tool_description: 通过钉钉的群机器人webhook发送群消息
           tool_label: 发送群消息
           tool_name: dingtalk_group_bot
@@ -892,12 +892,12 @@ workflow:
                 en_US: secret key for signing
                 ja_JP: secret key for signing
                 pt_BR: secret key for signing
-                zh_Hans: 加签秘钥
+                zh_Hans: 加签密钥
               label:
                 en_US: secret key for signing
                 ja_JP: secret key for signing
                 pt_BR: secret key for signing
-                zh_Hans: 加签秘钥
+                zh_Hans: 加签密钥
               llm_description: ""
               max: null
               min: null
@@ -990,7 +990,7 @@ workflow:
               value: text
             sign_secret:
               type: mixed
-              value: SECa02e0b4f6b3b40b590530436340998eaf82004d386596743a7ce839049882dc9
+              value: SEC_YOUR_DINGTALK_SIGNING_SECRET
           tool_description: 通过钉钉的群机器人webhook发送群消息
           tool_label: 发送群消息
           tool_name: dingtalk_group_bot
