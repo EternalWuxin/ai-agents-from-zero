@@ -4,13 +4,13 @@
 
 ## 按问题查找
 
-| 想弄清的问题 | 示例 |
-| --- | --- |
-| 换提示词与加载 Adapter 分别有什么影响？ | [10 条输入、40 份回答](/案例与源码-4-微调/examples/prompt-comparison/review.md)；[A/B/C 提示词定义](/案例与源码-4-微调/examples/prompt-comparison/prompts.json ':ignore') |
-| 为什么关闭思考后仍输出分析？ | [两种模型状态、两种模板的 12 份回答](/案例与源码-4-微调/examples/thinking-control/review.md) |
-| 参考答案也需要检查吗？ | [10 条参考标注审核草案](/案例与源码-4-微调/examples/thinking-control/annotation-review.md) |
-| 用户输入与答案如何成为 token 和标签？ | [预处理报告](/案例与源码-4-微调/examples/preprocessing/report.json ':ignore') 与 [1,800 条长度记录](/案例与源码-4-微调/examples/preprocessing/lengths.jsonl ':ignore')，配合第 30 章第 4.2 节阅读 |
-| 部署环境与接口返回应检查什么？ | [依赖版本清单](/案例与源码-4-微调/examples/deployment/installed-requirements.txt ':ignore')、[Python 请求与响应](/案例与源码-4-微调/examples/deployment/python-api.json ':ignore')，配合第 32 章阅读 |
+| 想弄清的问题                            | 示例                                                                                                                                                                                                 |
+| --------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 换提示词与加载 Adapter 分别有什么影响？ | [10 条输入、40 份回答](/案例与源码-4-微调/examples/prompt-comparison/review.md)；[A/B/C 提示词定义](/案例与源码-4-微调/examples/prompt-comparison/prompts.json ":ignore")                            |
+| 为什么关闭思考后仍输出分析？            | [两种模型状态、两种模板的 12 份回答](/案例与源码-4-微调/examples/thinking-control/review.md)                                                                                                         |
+| 参考答案也需要检查吗？                  | [10 条参考标注审核草案](/案例与源码-4-微调/examples/thinking-control/annotation-review.md)                                                                                                           |
+| 用户输入与答案如何成为 token 和标签？   | [预处理报告](/案例与源码-4-微调/examples/preprocessing/report.json ":ignore") 与 [1,800 条长度记录](/案例与源码-4-微调/examples/preprocessing/lengths.jsonl ":ignore")，配合第 30 章第 4.2 节阅读    |
+| 部署环境与接口返回应检查什么？          | [依赖版本清单](/案例与源码-4-微调/examples/deployment/installed-requirements.txt ":ignore")、[Python 请求与响应](/案例与源码-4-微调/examples/deployment/python-api.json ":ignore")，配合第 32 章阅读 |
 
 标注草案用于讨论选词规则，没有替换 `keywords-clean` 数据，也没有用于修改配套分数。提示词比较和模板比较使用验证集中的少量样本，不能当作正式业务准确率。
 
@@ -44,12 +44,12 @@ python3 案例与源码-4-微调/evaluate_keywords_predictions.py \
 
 四组共用 `examples/thinking-control/验证输入.jsonl`。查看或复算时，按下表选择回答文件与模板参数；这些文件都位于 `examples/thinking-control/`：
 
-| 原始回答文件 | `--template` |
-| --- | --- |
+| 原始回答文件                                                                                                                          | `--template`    |
+| ------------------------------------------------------------------------------------------------------------------------------------- | --------------- |
 | [原始模型-qwen3_nothink-关闭思考.jsonl](/案例与源码-4-微调/examples/thinking-control/原始模型-qwen3_nothink-关闭思考.jsonl ":ignore") | `qwen3_nothink` |
-| [原始模型-qwen3-关闭思考.jsonl](/案例与源码-4-微调/examples/thinking-control/原始模型-qwen3-关闭思考.jsonl ":ignore") | `qwen3` |
-| [Adapter-qwen3_nothink-关闭思考.jsonl](/案例与源码-4-微调/examples/thinking-control/Adapter-qwen3_nothink-关闭思考.jsonl ":ignore") | `qwen3_nothink` |
-| [Adapter-qwen3-关闭思考.jsonl](/案例与源码-4-微调/examples/thinking-control/Adapter-qwen3-关闭思考.jsonl ":ignore") | `qwen3` |
+| [原始模型-qwen3-关闭思考.jsonl](/案例与源码-4-微调/examples/thinking-control/原始模型-qwen3-关闭思考.jsonl ":ignore")                 | `qwen3`         |
+| [Adapter-qwen3_nothink-关闭思考.jsonl](/案例与源码-4-微调/examples/thinking-control/Adapter-qwen3_nothink-关闭思考.jsonl ":ignore")   | `qwen3_nothink` |
+| [Adapter-qwen3-关闭思考.jsonl](/案例与源码-4-微调/examples/thinking-control/Adapter-qwen3-关闭思考.jsonl ":ignore")                   | `qwen3`         |
 
 专用转换脚本检查两种已核验的完整输入包装，并复用课程通用转换器配对输入和参考答案；它不会删除或改写模型回答。错误包装、重复或缺失记录，以及参考答案不一致都会报错。
 
@@ -78,11 +78,11 @@ python3 案例与源码-4-微调/evaluate_keywords_predictions.py \
 
 复算其他组时，同时替换参考文件、回答文件和输出文件名。下表中的路径均相对于 `examples/prompt-comparison/`：
 
-| 原始回答文件 | 对应的参考文件 |
-| --- | --- |
+| 原始回答文件                                                                                             | 对应的参考文件                 |
+| -------------------------------------------------------------------------------------------------------- | ------------------------------ |
 | [原始模型-提示词A.jsonl](/案例与源码-4-微调/examples/prompt-comparison/原始模型-提示词A.jsonl ":ignore") | `data/keywords_prompt_a.jsonl` |
 | [原始模型-提示词B.jsonl](/案例与源码-4-微调/examples/prompt-comparison/原始模型-提示词B.jsonl ":ignore") | `data/keywords_prompt_b.jsonl` |
 | [原始模型-提示词C.jsonl](/案例与源码-4-微调/examples/prompt-comparison/原始模型-提示词C.jsonl ":ignore") | `data/keywords_prompt_c.jsonl` |
-| [Adapter-提示词B.jsonl](/案例与源码-4-微调/examples/prompt-comparison/Adapter-提示词B.jsonl ":ignore") | `data/keywords_prompt_b.jsonl` |
+| [Adapter-提示词B.jsonl](/案例与源码-4-微调/examples/prompt-comparison/Adapter-提示词B.jsonl ":ignore")   | `data/keywords_prompt_b.jsonl` |
 
 参考文件必须与该组提示词一致，不能直接使用未添加提示词要求的验证集，也不能使用 200 条测试集替代。自动精确匹配分数还需结合原文依据、术语全称和参考标注疑点阅读。

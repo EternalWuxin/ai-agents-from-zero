@@ -586,13 +586,13 @@ print(model.invoke("你是谁？").content)
 
 模型初始化只是第一步。进入 LangChain 1.x 主线后，一个 Chat Model 通常还会继续承担下面这些能力：
 
-| 能力 | 常见写法 | 后续章节 |
-| ---- | -------- | -------- |
-| 普通调用 | `model.invoke(messages)` | 本章、第 13 章 |
-| 流式输出 | `model.stream(messages)` | 第 10 章、第 21 章 |
-| 结构化输出 | `model.with_structured_output(schema)` | 第 14 章 |
-| 绑定工具 | `model.bind_tools(tools)` | 第 17 章 |
-| 进入链路 | `prompt | model | parser` | 第 15 章 |
+| 能力       | 常见写法                               | 后续章节           |
+| ---------- | -------------------------------------- | ------------------ |
+| 普通调用   | `model.invoke(messages)`               | 本章、第 13 章     |
+| 流式输出   | `model.stream(messages)`               | 第 10 章、第 21 章 |
+| 结构化输出 | `model.with_structured_output(schema)` | 第 14 章           |
+| 绑定工具   | `model.bind_tools(tools)`              | 第 17 章           |
+| 进入链路   | `prompt → model → parser`              | 第 15 章           |
 
 所以本章不要只把模型对象看成“请求客户端”。在后面的 Prompt、Parser、LCEL、Tools、Agent 里，它会一直作为核心组件出现。
 
@@ -602,12 +602,12 @@ print(model.invoke("你是谁？").content)
 
 常见用途如下：
 
-| 配置项 | 作用 | 常见场景 |
-| ------ | ---- | -------- |
-| `tags` | 给本次调用打标签 | 区分 `rag`、`agent`、`demo` 等不同链路 |
-| `metadata` | 记录额外上下文 | 记录用户、业务、实验版本等信息 |
-| `callbacks` | 挂接回调处理器 | 调试、日志、观察调用过程 |
-| `configurable` | 运行时切换配置 | 在同一段代码里切换模型或参数 |
+| 配置项         | 作用             | 常见场景                               |
+| -------------- | ---------------- | -------------------------------------- |
+| `tags`         | 给本次调用打标签 | 区分 `rag`、`agent`、`demo` 等不同链路 |
+| `metadata`     | 记录额外上下文   | 记录用户、业务、实验版本等信息         |
+| `callbacks`    | 挂接回调处理器   | 调试、日志、观察调用过程               |
+| `configurable` | 运行时切换配置   | 在同一段代码里切换模型或参数           |
 
 ![LangChain 调用时业务输入与 config 的分工：业务输入给模型理解，config 给运行时管理、观测和切换使用](images/11/11-3-8-1.svg)
 

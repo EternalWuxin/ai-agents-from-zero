@@ -1,40 +1,40 @@
-'use strict';
+"use strict";
 
-const fs = require('node:fs');
-const path = require('node:path');
-const {createRequire} = require('node:module');
+const fs = require("node:fs");
+const path = require("node:path");
+const { createRequire } = require("node:module");
 
-const rootDir = path.resolve(__dirname, '..');
+const rootDir = path.resolve(__dirname, "..");
 const requireFromDocsify = createRequire(
-  require.resolve('docsify-cli/package.json')
+  require.resolve("docsify-cli/package.json"),
 );
-const livereload = requireFromDocsify('livereload');
+const livereload = requireFromDocsify("livereload");
 const requireFromLivereload = createRequire(
-  requireFromDocsify.resolve('livereload/package.json')
+  requireFromDocsify.resolve("livereload/package.json"),
 );
-const chokidar = requireFromLivereload('chokidar');
-const serve = requireFromDocsify('./lib/commands/serve.js');
+const chokidar = requireFromLivereload("chokidar");
+const serve = requireFromDocsify("./lib/commands/serve.js");
 
 const ignoredDirectoryNames = new Set([
-  '.git',
-  '.venv',
-  'env',
-  'node_modules',
-  'venv',
+  ".git",
+  ".venv",
+  "env",
+  "node_modules",
+  "venv",
 ]);
 
 const ignoredRootSymlinkDirectories = new Set(
   fs
-    .readdirSync(rootDir, {withFileTypes: true})
-    .filter(entry => entry.isSymbolicLink())
-    .filter(entry => {
+    .readdirSync(rootDir, { withFileTypes: true })
+    .filter((entry) => entry.isSymbolicLink())
+    .filter((entry) => {
       try {
         return fs.statSync(path.join(rootDir, entry.name)).isDirectory();
       } catch {
         return true;
       }
     })
-    .map(entry => entry.name)
+    .map((entry) => entry.name),
 );
 
 function shouldIgnore(filePath) {
@@ -44,10 +44,7 @@ function shouldIgnore(filePath) {
     return false;
   }
 
-  if (
-    relativePath === '..' ||
-    relativePath.startsWith(`..${path.sep}`)
-  ) {
+  if (relativePath === ".." || relativePath.startsWith(`..${path.sep}`)) {
     return true;
   }
 
@@ -55,7 +52,7 @@ function shouldIgnore(filePath) {
 
   return (
     ignoredRootSymlinkDirectories.has(pathSegments[0]) ||
-    pathSegments.some(segment => ignoredDirectoryNames.has(segment))
+    pathSegments.some((segment) => ignoredDirectoryNames.has(segment))
   );
 }
 
@@ -63,12 +60,12 @@ const createLiveReloadServer = livereload.createServer;
 const watch = chokidar.watch;
 
 chokidar.watch = (paths, options = {}) =>
-  watch(paths, {...options, followSymlinks: false});
+  watch(paths, { ...options, followSymlinks: false });
 
-livereload.createServer = config =>
+livereload.createServer = (config) =>
   createLiveReloadServer({
     ...config,
     exclusions: [...(config.exclusions || []), shouldIgnore],
   });
 
-serve(rootDir, !process.argv.includes('--no-open'), 3000, 35729);
+serve(rootDir, !process.argv.includes("--no-open"), 3000, 35729);
