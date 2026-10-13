@@ -50,7 +50,7 @@ jq>=1.6
 langchain-unstructured>=1.0
 
 # ---------- MCP 与 Agent（11-mcp、12-agent：McpServerByFastMCP / McpServerWeatherByFastMCP / McpClientAgent / AgentSmartSelectV0.3 等） ----------
-mcp>=1.0
+mcp>=1.26,<2
 langchain-classic>=1.0
 langchain-mcp-adapters>=0.2
 

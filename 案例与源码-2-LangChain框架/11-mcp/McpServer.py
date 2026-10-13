@@ -63,8 +63,8 @@ class MCPWeatherServer:
 
 # ---------------------- 创建 MCP 实例并注册工具 ----------------------
 # 对应教程：MCP 架构中的「MCP 服务器」角色，为客户端提供可暴露的能力
-# 若改用 FastMCP：构造函数只接受服务名，不能写 FastMCP(..., host=..., port=...)；
-# host/port 在 run() 时传，如 mcp.run(transport="sse", host="127.0.0.1", port=8000)。参见 McpServerWeatherByFastMCP.py
+# 若使用本仓库锁定的 MCP Python SDK 1.x：host/port 在 FastMCP 构造函数中设置，
+# run() 只选择传输方式。参见 McpServerWeatherByFastMCP.py。
 mcp = MCPWeatherServer("WeatherServerSSE", host="127.0.0.1", port=8000)
 
 

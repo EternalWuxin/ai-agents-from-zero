@@ -12,8 +12,8 @@
   “一个真实工具如何通过网络方式暴露出去”。
 - 本仓库保留 transport="sse" 的写法，是为了和 mcp.json、课程截图、网络化示例保持一致；如果从
   当前官方主线理解，初学者还要知道 stdio 和 HTTP/Streamable HTTP 才是更需要重点理解的传输方式。
-- 正确写法：mcp = FastMCP("服务名")  →  mcp.run(transport="sse", host="127.0.0.1", port=8000)
-- 错误写法：mcp = FastMCP("服务名", host="127.0.0.1", port=8000)  # FastMCP 构造函数不支持 host/port
+- 本案例使用官方 MCP Python SDK 1.x：host/port 在 FastMCP 构造函数中设置，run() 只选择传输方式。
+- MCP Python SDK 2.x 已将 FastMCP 更名为 MCPServer，导入路径和启动参数也有所变化，请勿混用两个版本的写法。
 """
 
 from typing import Any
@@ -29,9 +29,10 @@ import httpx
 
 load_dotenv()
 
-# 构造函数只接受「服务名」；网络绑定信息在 run() 时再指定
 mcp = FastMCP(
-    "WeatherServerSSE"
+    "WeatherServerSSE",
+    host="127.0.0.1",
+    port=8000,
 )  # "WeatherServerSSE" 就是你自己起的名，可改成 "MyWeather" 等
 
 
@@ -51,6 +52,6 @@ def get_weather(city: str) -> str:
 
 
 if __name__ == "__main__":
-    # host、port 在 run() 时传入，不是构造函数。
+    # 官方 MCP Python SDK 1.x 在构造函数中设置 host、port，run() 只选择传输方式。
     # 这里启动后，mcp.json 中的 weather 服务就可以按约定地址连到它。
-    mcp.run(transport="sse", host="127.0.0.1", port=8000)
+    mcp.run(transport="sse")

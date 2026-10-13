@@ -380,6 +380,8 @@ MCP 真正落地时，传输方式只是第一层，安全边界同样重要。�
 
 仓库里的 MCP 服务端案例，主要围绕 FastMCP / 官方 Python SDK 这条路线展开。看案例前，先把这几个 API 的职责记住：
 
+> 本仓库案例使用官方 MCP Python SDK 1.x。该版本的网络绑定参数写在 `FastMCP(...)` 构造函数中；MCP Python SDK 2.x 已将 `FastMCP` 更名为 `MCPServer`，请不要混用两个版本的导入方式和启动参数。
+
 #### 5.4.1 创建服务实例
 
 ```python
@@ -435,10 +437,11 @@ mcp.run(transport="streamable-http")
 在当前仓库案例里，还保留了：
 
 ```python
-mcp.run(transport="sse", host="127.0.0.1", port=8000)
+mcp = FastMCP("Demo", host="127.0.0.1", port=8000)
+mcp.run(transport="sse")
 ```
 
-这类写法用于保留仓库现有案例。阅读时把它放在“**历史兼容 / 教学保留**”的语境里即可。
+这类写法用于保留仓库现有案例。这里的参数位置对应 MCP Python SDK 1.x；同时请把 SSE 放在“**历史兼容 / 教学保留**”的语境里理解。
 
 #### 5.4.6 从底层 SDK 视角看客户端
 
