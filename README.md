@@ -7,6 +7,12 @@
 
 <div align="center">
 
+<!-- language-switch:start -->
+
+**简体中文** · [English](translations/en/README.md)
+
+<!-- language-switch:end -->
+
 ![AI](https://img.shields.io/badge/AI-Agent-00c853?style=flat)
 ![Language](https://img.shields.io/badge/language-Chinese-2ea44f?style=flat)
 ![Stars](https://img.shields.io/github/stars/didilili/ai-agents-from-zero?logo=github&style=flat)

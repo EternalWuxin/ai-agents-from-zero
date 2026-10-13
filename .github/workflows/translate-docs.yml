@@ -1,0 +1,103 @@
+name: Sync English docs
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '**.md'
+      - '**.MD'
+      - '**.mD'
+      - '**.Md'
+      - '!translations/**'
+      - '!_sidebar.en.md'
+      - scripts/translate_docs.py
+      - scripts/test_translate_docs.py
+      - scripts/translation-glossary.md
+      - scripts/translation-requirements.txt
+      - .github/workflows/translate-docs.yml
+  workflow_dispatch:
+    inputs:
+      force:
+        description: Regenerate all managed English documents
+        type: boolean
+        default: false
+
+concurrency:
+  group: english-docs
+  cancel-in-progress: false
+
+jobs:
+  translate:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Set up documentation Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: scripts/translation-requirements.txt
+
+      - name: Install translation dependencies
+        run: python -m pip install -r scripts/translation-requirements.txt
+
+      - name: Test translation safeguards
+        run: python scripts/test_translate_docs.py
+
+      - name: Reuse translations from an open translation PR
+        shell: bash
+        run: |
+          if git show-ref --verify --quiet refs/remotes/origin/codex/english-docs; then
+            git archive origin/codex/english-docs -- translations/en/ | tar -x
+          fi
+
+      - name: Translate and validate English docs
+        env:
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          DEEPSEEK_BASE_URL: ${{ secrets.DEEPSEEK_BASE_URL }}
+          DEEPSEEK_MODEL: ${{ secrets.DEEPSEEK_MODEL }}
+          PYTHONIOENCODING: utf-8
+          FORCE: ${{ inputs.force || false }}
+        shell: bash
+        run: |
+          for name in DEEPSEEK_API_KEY DEEPSEEK_BASE_URL DEEPSEEK_MODEL; do
+            if [[ -z "${!name}" ]]; then
+              echo "::error::Missing repository secret: $name"
+              exit 1
+            fi
+          done
+          args=()
+          if [[ "$FORCE" == "true" ]]; then
+            args+=(--force)
+          fi
+          python scripts/translate_docs.py "${args[@]}"
+          python scripts/translate_docs.py --check
+          git diff --exit-code -- . ':(exclude)translations/en/**' ':(exclude)_sidebar.en.md'
+
+      - name: Create or update translation PR
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          branch: codex/english-docs
+          base: main
+          title: 'docs: sync English translations'
+          commit-message: 'docs: sync English translations'
+          body: |
+            Sync all Git-tracked Markdown documents and the English website sidebar.
+            New and changed documents are translated; unchanged translations are reused.
+            Code, document structure, links, source freshness and language navigation were checked.
+            Please review the English wording before merging.
+          add-paths: |
+            translations/en/
+            _sidebar.en.md
+          delete-branch: true
