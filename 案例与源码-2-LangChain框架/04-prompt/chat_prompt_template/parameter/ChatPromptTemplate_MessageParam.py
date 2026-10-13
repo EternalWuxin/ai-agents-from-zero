@@ -1,22 +1,25 @@
 """
-【案例】用「Message 类」定义 ChatPromptTemplate 的消息
+【案例】用「Message 模板类」定义 ChatPromptTemplate 的消息
 
 对应教程章节：第 13 章 - 提示词与消息模板 → 7、对话提示词模板（ChatPromptTemplate）
 
 知识点速览：
-- `SystemMessage`、`HumanMessage`、`AIMessage` 是 LangChain 最直观的消息表示方式。
-- 当你希望角色语义一眼可见，或者后续可能扩展到工具调用、元数据时，Message 类写法通常更稳妥。
-- 从学习路径上看：先理解元组与字典，再看 Message 类，会更容易把“角色”和“对象”对应起来。
+- `SystemMessagePromptTemplate`、`HumanMessagePromptTemplate` 用于定义可填充变量的消息模板。
+- `SystemMessage`、`HumanMessage` 是已经生成的固定消息，内容不会再次进行占位符替换。
+- 简单场景可使用元组；希望显式表达消息类型时，可以使用 Message 模板类。
 """
 
-from langchain_core.messages import SystemMessage, HumanMessage
-from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.prompts import (
+    ChatPromptTemplate,
+    HumanMessagePromptTemplate,
+    SystemMessagePromptTemplate,
+)
 
-# 用 Message 类列表定义模板：系统消息 + 用户消息，内容里仍可带占位符 {name}、{question}
+# 用 Message 模板类定义系统消息和用户消息，其中的占位符会在格式化时被替换
 chat_prompt = ChatPromptTemplate(
     [
-        SystemMessage(content="你是AI助手，你的名字叫{name}。"),
-        HumanMessage(content="请问：{question}"),
+        SystemMessagePromptTemplate.from_template("你是AI助手，你的名字叫{name}。"),
+        HumanMessagePromptTemplate.from_template("请问：{question}"),
     ]
 )
 
