@@ -276,7 +276,7 @@ volumes:
 在 `deepsearch-agents` 项目根目录执行：
 
 ```bash
-docker compose --env-file .env -f docs/docker-compose.yaml up -d
+docker compose --env-file .env -f docker/docker-compose.yaml up -d
 ```
 
 这条命令会做几件事：
@@ -292,20 +292,20 @@ docker compose --env-file .env -f docs/docker-compose.yaml up -d
 检查容器状态：
 
 ```bash
-docker compose --env-file .env -f docs/docker-compose.yaml ps
+docker compose --env-file .env -f docker/docker-compose.yaml ps
 ```
 
 查看启动日志：
 
 ```bash
-docker compose --env-file .env -f docs/docker-compose.yaml logs -f mysql
+docker compose --env-file .env -f docker/docker-compose.yaml logs -f mysql
 ```
 
-如果你修改了 `docs/mysql/mysql.sql`，但发现数据没有变化，通常是因为已有数据卷不会重复执行初始化脚本。教学环境可以重建数据卷：
+如果你修改了 `docker/mysql/mysql.sql`，但发现数据没有变化，通常是因为已有数据卷不会重复执行初始化脚本。教学环境可以重建数据卷：
 
 ```bash
-docker compose --env-file .env -f docs/docker-compose.yaml down -v
-docker compose --env-file .env -f docs/docker-compose.yaml up -d
+docker compose --env-file .env -f docker/docker-compose.yaml down -v
+docker compose --env-file .env -f docker/docker-compose.yaml up -d
 ```
 
 `down -v` 会删除这个 Compose 项目创建的数据卷，等于重新初始化数据库。只在本地教学数据上这样做，真实业务库不要随便删卷。
