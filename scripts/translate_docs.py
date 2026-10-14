@@ -99,7 +99,7 @@ class HtmlContent(HTMLParser):
     def handle_starttag(self, tag, attrs):
         self.images += tag == "img"
         self.links.extend(value for key, value in attrs if key in {"src", "href"} and value)
-        self.structure.append((tag, [(key, value) for key, value in attrs
+        self.structure.append((tag, [(key, None if key == "aria-label" else value) for key, value in attrs
                                      if key not in {"src", "href", "alt", "title"}]))
 
     handle_startendtag = handle_starttag
@@ -532,9 +532,9 @@ def save_rejected_translation(label, source, result, reason):
     context = DIAGNOSTICS.get()
     if context is None:
         return
-    directory, name = context
+    directory, name, cache_digest = context
     label = re.sub(r"[^A-Za-z0-9_.-]", "_", label)
-    record = {"file": name, "chunk": label, "reason": redact_error(reason),
+    record = {"file": name, "chunk": label, "cache_hash": cache_digest, "reason": redact_error(reason),
               "source": redact_error(source), "result": redact_error(result)}
     write_atomic(directory / f"{label}.json", json.dumps(record, ensure_ascii=False, indent=2) + "\n")
 
@@ -636,6 +636,34 @@ def load_checkpoint(directory, name, source_text, cache_digest):
         return None
 
 
+def recover_rejected_checkpoint(directory, name, source_text, cache_digest, legacy_digest=None):
+    path = directory / "_rejected" / name / "document.json"
+    if not path.is_file():
+        return None
+    try:
+        record = read_json(path)
+    except ValueError:
+        return None
+    if not isinstance(record, dict):
+        return None
+    text = record.get("result")
+    if (record.get("cache_hash", legacy_digest) != cache_digest or record.get("file") != name
+            or record.get("chunk") != "document" or record.get("source") != source_text
+            or not isinstance(text, str) or "[redacted]" in text):
+        return None
+    try:
+        validate_raw_translation(source_text, text, name)
+    except ValueError:
+        return None
+    recovered = {"schema_version": 1, "cache_hash": cache_digest,
+                 "source_hash": hashlib.sha256(source_text.encode()).hexdigest(),
+                 "text_hash": hashlib.sha256(text.encode()).hexdigest(), "text": text,
+                 "translation_date": datetime.now(timezone.utc).isoformat()}
+    write_atomic(directory / (name + ".json"), json.dumps(recovered, ensure_ascii=False, indent=2) + "\n")
+    print(f"Recovered validated rejected translation: {name}", flush=True)
+    return recovered
+
+
 async def translate_documents(staging, pending, digest, checkpoint_dir, cache_digest, force=False):
     # Use Co-op's content API: the wrapper owns file discovery and URL rewriting,
     # including Markdown under .github/ and other paths the upstream CLI excludes.
@@ -647,10 +675,12 @@ async def translate_documents(staging, pending, digest, checkpoint_dir, cache_di
 
     async def translate(name):
         async with semaphore:
-            DIAGNOSTICS.set((checkpoint_dir / "_rejected" / name, name))
+            DIAGNOSTICS.set((checkpoint_dir / "_rejected" / name, name, cache_digest))
             source = staging / name
             source_text = source.read_text()
             record = None if force else load_checkpoint(checkpoint_dir, name, source_text, cache_digest)
+            if not force and record is None:
+                record = recover_rejected_checkpoint(checkpoint_dir, name, source_text, cache_digest)
             if record:
                 text = record["text"]
                 print(f"Restored checkpoint: {name}", flush=True)
@@ -816,6 +846,8 @@ def main():
     modes.add_argument("--check", action="store_true", help="Validate English docs without API calls")
     modes.add_argument("--dry-run", action="store_true", help="Preview translation volume without writing files")
     modes.add_argument("--probe", nargs="+", metavar="SOURCE", help="Validate selected tracked documents and retain checkpoints without publishing")
+    modes.add_argument("--recover-rejected", nargs="+", metavar="SOURCE", help="Revalidate reviewed rejected documents without API calls or publication")
+    args.add_argument("--legacy-cache-hash", help="Verified original configuration fingerprint for diagnostics created before provenance tracking")
     args.add_argument("--force", action="store_true", help="Regenerate all managed English docs")
     args.add_argument("--checkpoint-dir", type=Path, help="Persist validated raw translations for interrupted-run recovery")
     options = args.parse_args()
@@ -825,6 +857,13 @@ def main():
             check_outputs(root)
         elif options.probe:
             probe_docs(root, options.probe, options.checkpoint_dir)
+        elif options.recover_rejected:
+            directory = options.checkpoint_dir.resolve() if options.checkpoint_dir else checkpoint_directory(root)
+            managed = set(discover_documents(root))
+            for name in options.recover_rejected:
+                if name not in managed or recover_rejected_checkpoint(
+                        directory, name, (root / name).read_text(), checkpoint_digest(root), options.legacy_cache_hash) is None:
+                    raise ValueError(f"Cannot safely recover rejected translation: {name}")
         else:
             sync_docs(root, options.dry_run, options.force, options.checkpoint_dir)
     except Exception as error:

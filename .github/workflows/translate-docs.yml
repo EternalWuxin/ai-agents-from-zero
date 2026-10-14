@@ -74,6 +74,7 @@ jobs:
             if [[ -n "$checkpoint_artifact" ]] && gh run download "$checkpoint_run" \
               --repo "$GITHUB_REPOSITORY" --name "$checkpoint_artifact" --dir .translation-checkpoints; then
               echo "Restored translation checkpoints from run $checkpoint_run"
+              echo "TRANSLATION_CHECKPOINT_RUN=$checkpoint_run" >> "$GITHUB_ENV"
               break
             fi
           done < <(gh run list --repo "$GITHUB_REPOSITORY" --workflow translate-docs.yml \
@@ -106,6 +107,14 @@ jobs:
           args=()
           if [[ "$FORCE" == "true" ]]; then
             args+=(--force)
+          fi
+          # One-time recovery of the two reviewed, complete translations whose
+          # accessibility labels were rejected before provenance was recorded.
+          if [[ "${TRANSLATION_CHECKPOINT_RUN:-}" == "38508127593" ]]; then
+            legacy_hash=$(python -c 'import json; print(json.load(open(".translation-checkpoints/README.md.json"))["cache_hash"])')
+            python scripts/translate_docs.py --checkpoint-dir .translation-checkpoints \
+              --legacy-cache-hash "$legacy_hash" --recover-rejected \
+              '30-模型训练原理与高效微调.md' '31-LLaMA-Factory环境搭建与微调实战.md'
           fi
           python scripts/translate_docs.py --checkpoint-dir .translation-checkpoints --probe \
             '1-3-RAG、微调、续训与智能体选型.md' \

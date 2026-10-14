@@ -464,6 +464,22 @@ class TranslationSafetyTests(unittest.TestCase):
         self.assertEqual(protected, text)
         self.assertEqual(literals, {})
 
+    def test_html_accessibility_labels_can_translate_without_changing_structure(self):
+        source = '<div role="region" aria-label="中文说明" style="overflow-x: auto;">正文</div>\n'
+        translated = source.replace("中文说明", "English description").replace("正文", "Body")
+        docs.validate_raw_translation(source, translated, "Guide.md")
+        (self.root / "Guide.md").write_text(source)
+        (self.output / "Guide.md").write_text(translated)
+        docs.validate_document(self.root / "Guide.md", self.output / "Guide.md", self.root)
+
+    def test_html_accessibility_labels_and_layout_attributes_cannot_be_removed(self):
+        source = '<div role="region" aria-label="说明" style="overflow-x: auto;">Body</div>\n'
+        for translated in (source.replace(' aria-label="说明"', ''),
+                           source.replace('role="region"', 'role="button"'),
+                           source.replace('overflow-x: auto;', 'overflow-x: hidden;')):
+            with self.subTest(translated=translated), self.assertRaisesRegex(ValueError, "html"):
+                docs.validate_raw_translation(source, translated, "Guide.md")
+
     def test_code_markers_cannot_move_between_source_lines(self):
         from co_op_translator.core.llm.markdown_translator import MarkdownTranslator
         from co_op_translator.utils.markdown import SPLIT_DELIMITER
@@ -533,6 +549,41 @@ class TranslationSafetyTests(unittest.TestCase):
         self.assertIn("[redacted]", sample)
         self.assertEqual((self.output / "Guide.md").read_text(), "Accepted English.\n")
         self.assertFalse((self.root / "checkpoints/Guide.md.json").exists())
+
+    def test_complete_rejected_translation_can_be_recovered_after_validator_correction(self):
+        source = '<div aria-label="中文说明">正文</div>\n'
+        translated = '<div aria-label="English description">Body</div>\n'
+        directory = self.root / "checkpoints"
+        sample = directory / "_rejected/Guide.md/document.json"
+        docs.write_atomic(sample, json.dumps({"file": "Guide.md", "chunk": "document",
+                                             "source": source, "result": translated}))
+        self.assertIsNone(docs.recover_rejected_checkpoint(directory, "Guide.md", source, "cache"))
+        self.assertIsNone(docs.recover_rejected_checkpoint(directory, "Guide.md", source, "cache", "other"))
+        record = docs.recover_rejected_checkpoint(directory, "Guide.md", source, "cache", "cache")
+        self.assertEqual(record["text"], translated)
+        self.assertEqual(docs.load_checkpoint(directory, "Guide.md", source, "cache"), record)
+        self.assertFalse((self.output / "Guide.md").exists())
+
+    def test_recovery_rejects_stale_sources_redactions_and_damaged_code(self):
+        source = "# Guide\n\nUse `safe`.\n"
+        directory = self.root / "checkpoints"
+        sample = directory / "_rejected/Guide.md/document.json"
+        for changed in ({"source": "Old source"}, {"result": source + "[redacted]"},
+                        {"result": source.replace("`safe`", "`changed`")}, {"cache_hash": "other"}):
+            record = {"file": "Guide.md", "chunk": "document", "source": source,
+                      "result": source, "cache_hash": "cache", **changed}
+            docs.write_atomic(sample, json.dumps(record))
+            with self.subTest(changed=changed):
+                self.assertIsNone(docs.recover_rejected_checkpoint(directory, "Guide.md", source, "cache"))
+        self.assertFalse((directory / "Guide.md.json").exists())
+
+    def test_malformed_rejected_samples_do_not_abort_translation_recovery(self):
+        directory = self.root / "checkpoints"
+        sample = directory / "_rejected/Guide.md/document.json"
+        for content in ('{"broken":', '[]'):
+            docs.write_atomic(sample, content)
+            with self.subTest(content=content):
+                self.assertIsNone(docs.recover_rejected_checkpoint(directory, "Guide.md", "# Guide\n", "cache"))
 
     def test_damaged_markers_cause_smaller_chunks_after_bounded_retries(self):
         from co_op_translator.core.llm.markdown_translator import MarkdownTranslator
