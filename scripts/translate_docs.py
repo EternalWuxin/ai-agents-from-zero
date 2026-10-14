@@ -6,6 +6,7 @@ from collections import Counter
 from datetime import datetime, timezone
 from functools import lru_cache
 import hashlib
+import hmac
 from html import escape, unescape
 from html.parser import HTMLParser
 import importlib.metadata
@@ -33,6 +34,12 @@ NAV_END = "<!-- language-switch:end -->"
 NAV_PATTERN = re.compile(re.escape(NAV_START) + r".*?" + re.escape(NAV_END), re.S)
 PARSER = MarkdownIt("commonmark").enable("table")
 GENERATED_SIDEBAR = "_sidebar.en.md"
+PLACEHOLDERS = re.compile(r"@@(?:INLINE_CODE|CODE_BLOCK|LINK_DESTINATION)_\d+@@")
+FILE_ATTEMPTS = 3
+
+
+class TranslationValidationError(ValueError):
+    pass
 
 
 def is_source_document(name):
@@ -377,16 +384,27 @@ def translation_api_settings():
     return base_url, model
 
 
-def settings_digest():
+def private_configuration_digest(content, root=None):
+    from dotenv import dotenv_values
+    key = os.getenv("DEEPSEEK_API_KEY")
+    if not key and root is not None:
+        key = dotenv_values(root / ".env").get("deepseek-api")
+    # Public artifacts must not expose a guessable fingerprint of private URL/model pairs.
+    if key:
+        return hmac.new(key.encode(), content, hashlib.sha256).hexdigest()
+    return hashlib.sha256(content).hexdigest()
+
+
+def settings_digest(root=None):
     configuration = json.dumps(translation_api_settings(), ensure_ascii=False).encode()
-    return hashlib.sha256(Path(__file__).read_bytes() + GLOSSARY.read_bytes() + configuration).hexdigest()
+    return private_configuration_digest(Path(__file__).read_bytes() + GLOSSARY.read_bytes() + configuration, root)
 
 
 def check_outputs(root, files=None):
     root = root.resolve()
     files = files or discover_documents(root)
     metadata = read_json(root / OUTPUT / METADATA)
-    if read_json(root / OUTPUT / SETTINGS).get("settings_hash") != settings_digest():
+    if read_json(root / OUTPUT / SETTINGS).get("settings_hash") != settings_digest(root):
         raise ValueError("Translation settings changed; run the translation script")
     for name in files:
         source, target = root / name, root / OUTPUT / name
@@ -462,30 +480,128 @@ def configure_deepseek(root):
     AsyncCompletions.create = create
 
 
-async def translate_documents(staging, pending, digest):
+def install_placeholder_guard():
+    # Check literals before Co-op leaves its chunk-recovery loop. The upstream
+    # final restore raises ValueError too late to retry or split a damaged chunk.
+    from co_op_translator.core.llm.markdown_translator import MarkdownTranslator, TranslationIncompleteError
+    original = MarkdownTranslator._translate_chunk_once
+    if getattr(original, "_checks_translation_placeholders", False):
+        return
+
+    async def guarded(self, chunk, language_code, language_name, is_rtl, md_file_path,
+                      chunk_label, index, total):
+        result = await original(self, chunk, language_code, language_name, is_rtl,
+                                md_file_path, chunk_label, index, total)
+        expected = Counter(PLACEHOLDERS.findall(chunk))
+        actual = Counter(PLACEHOLDERS.findall(result))
+        if expected != actual:
+            changed = sorted(marker for marker in expected.keys() | actual.keys()
+                             if expected[marker] != actual[marker])
+            raise TranslationIncompleteError(
+                f"{md_file_path.name}: chunk {chunk_label} changed protected placeholders: {', '.join(changed)}")
+        return result
+
+    guarded._checks_translation_placeholders = True
+    MarkdownTranslator._translate_chunk_once = guarded
+
+
+def validate_raw_translation(source_text, translated_text, name):
+    before, after = document_parts(source_text), document_parts(translated_text)
+    for part in ("headings", "code", "inline_code", "table_rows", "images", "html"):
+        if before[part] != after[part]:
+            raise TranslationValidationError(f"{name}: translated {part} changed")
+    if Counter(before["links"]) != Counter(after["links"]):
+        raise TranslationValidationError(f"{name}: translator changed link destinations")
+    original_markers = Counter(PLACEHOLDERS.findall(source_text))
+    if Counter(PLACEHOLDERS.findall(translated_text)) != original_markers:
+        raise TranslationValidationError(f"{name}: unfinished literal placeholders")
+
+
+def checkpoint_directory(root):
+    if (root / ".git").is_file():
+        path = subprocess.check_output(["git", "rev-parse", "--git-path", "translation-checkpoints"], cwd=root).decode().strip()
+        return (root / path).resolve()
+    return root / ".git" / "translation-checkpoints"
+
+
+def checkpoint_digest(root=None):
+    # Raw translations survive changes to retries, logging and link rewriting.
+    # A changed connection, glossary or translator version invalidates them.
+    content = json.dumps(["raw-en-v1", VERSION, *translation_api_settings()], ensure_ascii=False).encode()
+    return private_configuration_digest(content + GLOSSARY.read_bytes(), root)
+
+
+def load_checkpoint(directory, name, source_text, cache_digest):
+    path = directory / (name + ".json")
+    if not path.is_file():
+        return None
+    try:
+        record = read_json(path)
+        text = record["text"]
+        if (record.get("schema_version") != 1 or record.get("cache_hash") != cache_digest
+                or record.get("source_hash") != hashlib.sha256(source_text.encode()).hexdigest()
+                or record.get("text_hash") != hashlib.sha256(text.encode()).hexdigest()
+                or not isinstance(record.get("translation_date"), str)):
+            return None
+        validate_raw_translation(source_text, text, name)
+        return record
+    except (ValueError, KeyError, TypeError, AttributeError):
+        print(f"Ignoring invalid checkpoint: {name}", flush=True)
+        return None
+
+
+async def translate_documents(staging, pending, digest, checkpoint_dir, cache_digest, force=False):
     # Use Co-op's content API: the wrapper owns file discovery and URL rewriting,
     # including Markdown under .github/ and other paths the upstream CLI excludes.
     from co_op_translator.api import translate_markdown_content
+    install_placeholder_guard()
     semaphore = asyncio.Semaphore(3)
     metadata = read_json(staging / OUTPUT / METADATA)
+    failures = {}
 
     async def translate(name):
         async with semaphore:
             source = staging / name
-            text = await translate_markdown_content(source.read_text(), "en", options={
-                "source_path": source, "context": GLOSSARY.read_text()})
-            # Provider calls must preserve URLs; only the wrapper relocates them.
-            if Counter(document_parts(source.read_text())["links"]) != Counter(document_parts(text)["links"]):
-                raise ValueError(f"{name}: translator changed link destinations")
+            source_text = source.read_text()
+            record = None if force else load_checkpoint(checkpoint_dir, name, source_text, cache_digest)
+            if record:
+                text = record["text"]
+                print(f"Restored checkpoint: {name}", flush=True)
+            else:
+                for attempt in range(1, FILE_ATTEMPTS + 1):
+                    try:
+                        text = await translate_markdown_content(source_text, "en", options={
+                            "source_path": source, "context": GLOSSARY.read_text()})
+                        validate_raw_translation(source_text, text, name)
+                        record = {"schema_version": 1, "cache_hash": cache_digest,
+                                  "source_hash": hashlib.sha256(source_text.encode()).hexdigest(),
+                                  "text_hash": hashlib.sha256(text.encode()).hexdigest(), "text": text,
+                                  "translation_date": datetime.now(timezone.utc).isoformat()}
+                        write_atomic(checkpoint_dir / (name + ".json"),
+                                     json.dumps(record, ensure_ascii=False, indent=2) + "\n")
+                        print(f"Translated and checkpointed: {name}", flush=True)
+                        break
+                    except Exception as error:
+                        retryable = isinstance(error, TranslationValidationError) or (
+                            isinstance(error, ValueError) and "Expected code placeholder" in str(error))
+                        if retryable and attempt < FILE_ATTEMPTS:
+                            print(f"Retrying document {name} ({attempt + 1}/{FILE_ATTEMPTS}): {redact_error(str(error))}", flush=True)
+                            await asyncio.sleep(attempt)
+                            continue
+                        failures[name] = redact_error(str(error))
+                        print(f"Failed document: {name}: {failures[name]}", file=sys.stderr, flush=True)
+                        return
             write_atomic(staging / OUTPUT / name, text)
             metadata[name] = {"original_hash": hashlib.md5(source.read_bytes()).hexdigest(),
-                              "translation_date": datetime.now(timezone.utc).isoformat(),
+                              "translation_date": record["translation_date"],
                               "source_file": name, "language_code": "en", "settings_hash": digest,
-                              "anchors": heading_anchors(source.read_text(), text)}
-            print(f"Translated: {name}", flush=True)
+                              "anchors": heading_anchors(source_text, text)}
 
     await asyncio.gather(*(translate(name) for name in pending))
     write_atomic(staging / OUTPUT / METADATA, json.dumps(metadata, ensure_ascii=False, indent=2) + "\n")
+    if failures:
+        details = "\n".join(f"{name}: {message}" for name, message in sorted(failures.items()))
+        raise RuntimeError(f"Translation failed for {len(failures)} document(s); valid checkpoints were retained.\n{details}")
 
 
 def prune_translations(root, files):
@@ -497,18 +613,23 @@ def prune_translations(root, files):
     write_atomic(root / OUTPUT / METADATA, json.dumps(metadata, ensure_ascii=False, indent=2) + "\n")
 
 
-def sync_docs(root, dry_run=False, force=False):
+def sync_docs(root, dry_run=False, force=False, checkpoint_dir=None):
     root = root.resolve()
     if importlib.metadata.version("co-op-translator") != VERSION:
         raise ValueError(f"Install scripts/translation-requirements.txt (Co-op Translator {VERSION})")
-    digest = settings_digest()
+    digest = settings_digest(root)
     files = discover_documents(root)
     metadata = read_json(root / OUTPUT / METADATA)
     pending = [name for name in files if force or not (root / OUTPUT / name).is_file()
                or metadata.get(name, {}).get("settings_hash") != digest
                or metadata.get(name, {}).get("original_hash") != hashlib.md5((root / name).read_bytes()).hexdigest()]
-    print(f"Managed Markdown: {len(files)}; need translation: {len(pending)}.")
+    print(f"Managed Markdown: {len(files)}; pending output updates: {len(pending)}.")
     if dry_run:
+        directory = Path(checkpoint_dir).resolve() if checkpoint_dir is not None else checkpoint_directory(root)
+        cache_digest = checkpoint_digest(root)
+        cached = [name for name in pending if not force and
+                  load_checkpoint(directory, name, (root / name).read_text(), cache_digest) is not None]
+        print(f"Valid checkpoints: {len(cached)}; need API translation: {len(pending) - len(cached)}.")
         print(f"Pending source bytes: {sum((root / name).stat().st_size for name in pending):,}.")
         for name in pending:
             print(f"  {name}")
@@ -519,12 +640,13 @@ def sync_docs(root, dry_run=False, force=False):
     if not NAV_PATTERN.search(readme_text) or apply_language_switch(
             readme_text, "zh", source_readme, root / OUTPUT / "README.md") != readme_text:
         raise ValueError("Invalid Chinese README language switch; no output was published")
+    checkpoint_dir = Path(checkpoint_dir).resolve() if checkpoint_dir is not None else checkpoint_directory(root)
     with tempfile.TemporaryDirectory(prefix="translate-docs-") as directory:
         staging = Path(directory).resolve()
         snapshots = prepare_workspace(root, staging, files)
         if pending:
             configure_deepseek(root)
-            asyncio.run(translate_documents(staging, pending, digest))
+            asyncio.run(translate_documents(staging, pending, digest, checkpoint_dir, checkpoint_digest(root), force))
         for name in files:
             path = staging / OUTPUT / name
             text = repair_local_links(path.read_text(), path, staging,
@@ -536,7 +658,7 @@ def sync_docs(root, dry_run=False, force=False):
                 text = apply_language_switch(text, "en", staging / name, path)
             path.write_text(text)
         verify_sources_unchanged(root, snapshots)
-        if settings_digest() != digest or discover_documents(root) != files:
+        if settings_digest(root) != digest or discover_documents(root) != files:
             raise RuntimeError("Translation settings or file list changed during the run; no output was published")
         publish_translations(staging, root, files)
         prune_translations(root, files)
@@ -577,13 +699,14 @@ def main():
     modes.add_argument("--check", action="store_true", help="Validate English docs without API calls")
     modes.add_argument("--dry-run", action="store_true", help="Preview translation volume without writing files")
     args.add_argument("--force", action="store_true", help="Regenerate all managed English docs")
+    args.add_argument("--checkpoint-dir", type=Path, help="Persist validated raw translations for interrupted-run recovery")
     options = args.parse_args()
     try:
         root = options.root.resolve()
         if options.check:
             check_outputs(root)
         else:
-            sync_docs(root, options.dry_run, options.force)
+            sync_docs(root, options.dry_run, options.force, options.checkpoint_dir)
     except Exception as error:
         message = redact_error(str(error))
         print(f"Translation stopped: {message}", file=sys.stderr)

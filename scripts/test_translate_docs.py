@@ -9,6 +9,7 @@ from unittest.mock import patch
 import json
 import asyncio
 import os
+from types import SimpleNamespace, MethodType
 
 
 MODULE_PATH = Path(__file__).with_name("translate_docs.py")
@@ -309,6 +310,209 @@ class TranslationSafetyTests(unittest.TestCase):
             self.assertEqual(calls, [])
             self.assertFalse((self.output / "New.md").exists())
             self.assertNotIn("New.md", json.loads((self.output / docs.METADATA).read_text()))
+
+    def test_lost_code_marker_is_retried_by_the_existing_chunk_recovery(self):
+        from co_op_translator.core.llm.markdown_translator import MarkdownTranslator
+        chunk = "Use @@INLINE_CODE_240@@ and @@LINK_DESTINATION_0@@.\n"
+        calls = []
+
+        async def provider(self, content, *args, **kwargs):
+            calls.append(content)
+            return content.replace("@@INLINE_CODE_240@@", "") if len(calls) == 1 else content
+
+        with patch.object(MarkdownTranslator, "_translate_chunk_once", provider):
+            docs.install_placeholder_guard()
+            instance = SimpleNamespace(CHUNK_RETRY_ATTEMPTS=1)
+            instance._translate_chunk_once = MethodType(MarkdownTranslator._translate_chunk_once, instance)
+            result = asyncio.run(MarkdownTranslator._translate_chunk_with_recovery(
+                instance, chunk, "en", "English", False, self.root / "Guide.md", "1", 1, 1, 0))
+        self.assertEqual(result, chunk)
+        self.assertEqual(len(calls), 2)
+
+    def test_damaged_markers_cause_smaller_chunks_after_bounded_retries(self):
+        from co_op_translator.core.llm.markdown_translator import MarkdownTranslator
+        chunk = "@@INLINE_CODE_0@@\n@@INLINE_CODE_1@@\n"
+        calls = []
+
+        async def provider(self, content, *args, **kwargs):
+            calls.append(content)
+            return content.replace("@@INLINE_CODE_0@@", "") if content == chunk else content
+
+        with patch.object(MarkdownTranslator, "_translate_chunk_once", provider):
+            docs.install_placeholder_guard()
+            instance = SimpleNamespace(CHUNK_RETRY_ATTEMPTS=1)
+            instance._translate_chunk_once = MethodType(MarkdownTranslator._translate_chunk_once, instance)
+            instance._translate_chunk_with_recovery = MethodType(MarkdownTranslator._translate_chunk_with_recovery, instance)
+            instance._split_failed_chunk = lambda content, depth: ["@@INLINE_CODE_0@@\n", "@@INLINE_CODE_1@@\n"]
+            result = asyncio.run(instance._translate_chunk_with_recovery(
+                chunk, "en", "English", False, self.root / "Guide.md", "1", 1, 1, 0))
+        self.assertEqual(result, chunk)
+        self.assertEqual(calls, [chunk, chunk, "@@INLINE_CODE_0@@\n", "@@INLINE_CODE_1@@\n"])
+
+    def test_failed_batch_keeps_valid_checkpoints_and_resumes_only_the_failed_file(self):
+        files = ("README.md", "Good.md", "Bad.md", "Later.md")
+        for name in files:
+            (self.root / name).write_text("# 文档\n\nUse `safe`.\n")
+        readme = self.root / "README.md"
+        readme.write_text(docs.apply_language_switch(readme.read_text(), "zh", readme, self.output / "README.md"))
+        (self.output / "Good.md").write_text("Existing accepted translation.\n")
+        checkpoint = self.root / "checkpoint"
+        calls = []
+        fail = True
+
+        async def provider(text, language, options):
+            name = Path(options["source_path"]).name
+            calls.append(name)
+            if name == "Bad.md" and fail:
+                raise RuntimeError("simulated provider failure")
+            return text.replace("# 文档", "# Guide")
+
+        with patch.object(docs, "discover_documents", return_value=files), \
+             patch.object(docs, "configure_deepseek"), \
+             patch("co_op_translator.api.translate_markdown_content", side_effect=provider):
+            with self.assertRaisesRegex(RuntimeError, "Bad.md"):
+                docs.sync_docs(self.root, checkpoint_dir=checkpoint)
+            self.assertEqual((self.output / "Good.md").read_text(), "Existing accepted translation.\n")
+            self.assertCountEqual([p.name for p in checkpoint.glob("*.json")],
+                                  ["README.md.json", "Good.md.json", "Later.md.json"])
+            self.assertFalse((checkpoint / "Bad.md.json").exists())
+            fail = False
+            calls.clear()
+            docs.sync_docs(self.root, checkpoint_dir=checkpoint)
+            self.assertEqual(calls, ["Bad.md"])
+            docs.check_outputs(self.root, files)
+
+    def test_cached_text_is_revalidated_and_source_changes_invalidate_it(self):
+        files = ("README.md", "Guide.md")
+        for name in files:
+            (self.root / name).write_text("# 文档\n\nUse `safe`.\n")
+        readme = self.root / "README.md"
+        readme.write_text(docs.apply_language_switch(readme.read_text(), "zh", readme, self.output / "README.md"))
+        checkpoint = self.root / "checkpoint"
+        calls = []
+
+        async def provider(text, language, options):
+            calls.append(Path(options["source_path"]).name)
+            return text.replace("# 文档", "# Guide")
+
+        with patch.object(docs, "discover_documents", return_value=files), \
+             patch.object(docs, "configure_deepseek"), \
+             patch("co_op_translator.api.translate_markdown_content", side_effect=provider):
+            docs.sync_docs(self.root, checkpoint_dir=checkpoint)
+            record_path = checkpoint / "Guide.md.json"
+            record = json.loads(record_path.read_text())
+            record["text"] = record["text"].replace("`safe`", "`danger`")
+            record["text_hash"] = hashlib.sha256(record["text"].encode()).hexdigest()
+            record_path.write_text(json.dumps(record))
+            for name in files:
+                (self.output / name).unlink()
+            calls.clear()
+            docs.sync_docs(self.root, checkpoint_dir=checkpoint)
+            self.assertEqual(calls, ["Guide.md"])
+            (self.root / "Guide.md").write_text("# 文档\n\nUse `new`.\n")
+            calls.clear()
+            docs.sync_docs(self.root, checkpoint_dir=checkpoint)
+            self.assertEqual(calls, ["Guide.md"])
+
+    def test_invalid_code_output_is_retried_and_never_checkpointed(self):
+        files = ("README.md",)
+        source = self.root / "README.md"
+        source.write_text(docs.apply_language_switch("# 文档\n\nUse `safe`.\n", "zh", source, self.output / "README.md"))
+        checkpoint = self.root / "checkpoint"
+        calls = []
+
+        async def provider(text, language, options):
+            calls.append(text)
+            return text.replace("`safe`", "`danger`")
+
+        with patch.object(docs, "discover_documents", return_value=files), \
+             patch.object(docs, "configure_deepseek"), patch.object(docs.asyncio, "sleep"), \
+             patch("co_op_translator.api.translate_markdown_content", side_effect=provider):
+            with self.assertRaisesRegex(RuntimeError, "README.md.*code"):
+                docs.sync_docs(self.root, checkpoint_dir=checkpoint)
+        self.assertEqual(len(calls), 3)
+        self.assertFalse((checkpoint / "README.md.json").exists())
+        self.assertFalse((self.output / "README.md").exists())
+
+    def test_model_changes_and_force_do_not_reuse_old_checkpoints(self):
+        files = ("README.md",)
+        source = self.root / "README.md"
+        source.write_text(docs.apply_language_switch("# 文档\n\nUse `safe`.\n", "zh", source, self.output / "README.md"))
+        checkpoint = self.root / "checkpoint"
+        calls = []
+
+        async def provider(text, language, options):
+            calls.append(text)
+            return text.replace("# 文档", "# Guide")
+
+        with patch.dict(os.environ, {"DEEPSEEK_BASE_URL": "https://gateway.example.invalid/v1",
+                                    "DEEPSEEK_MODEL": "example-model", "DEEPSEEK_API_KEY": "test-key"}, clear=True), \
+             patch.object(docs, "discover_documents", return_value=files), \
+             patch.object(docs, "configure_deepseek"), \
+             patch("co_op_translator.api.translate_markdown_content", side_effect=provider):
+            docs.sync_docs(self.root, checkpoint_dir=checkpoint)
+            os.environ["DEEPSEEK_MODEL"] = "different-model"
+            calls.clear()
+            docs.sync_docs(self.root, checkpoint_dir=checkpoint)
+            self.assertEqual(len(calls), 1)
+            calls.clear()
+            docs.sync_docs(self.root, force=True, checkpoint_dir=checkpoint)
+            self.assertEqual(len(calls), 1)
+            content = (checkpoint / "README.md.json").read_text()
+            self.assertNotIn("gateway.example.invalid", content)
+            self.assertNotIn("different-model", content)
+            self.assertNotIn("test-key", content)
+
+    def test_public_checkpoint_fingerprints_require_the_private_key(self):
+        with patch.dict(os.environ, {"DEEPSEEK_BASE_URL": "https://gateway.example.invalid/v1",
+                                    "DEEPSEEK_MODEL": "example-model", "DEEPSEEK_API_KEY": "test-key-one"}, clear=True):
+            first = docs.checkpoint_digest()
+            os.environ["DEEPSEEK_API_KEY"] = "test-key-two"
+            self.assertNotEqual(first, docs.checkpoint_digest())
+            os.environ["DEEPSEEK_API_KEY"] = "test-key-one"
+            self.assertEqual(first, docs.checkpoint_digest())
+
+    def test_local_dotenv_credentials_keep_checkpoint_and_output_hashes_consistent(self):
+        from openai.resources.chat.completions import AsyncCompletions
+        files = ("README.md",)
+        source = self.root / "README.md"
+        source.write_text(docs.apply_language_switch("# 文档\n\nUse `safe`.\n", "zh", source, self.output / "README.md"))
+        (self.root / ".env").write_text("deepseek-api=local-test-key\n")
+        checkpoint = self.root / "checkpoint"
+
+        async def provider(text, language, options):
+            return text.replace("# 文档", "# Guide")
+
+        with patch.dict(os.environ, {}, clear=True), \
+             patch.object(AsyncCompletions, "create", AsyncCompletions.create), \
+             patch.object(docs, "discover_documents", return_value=files), \
+             patch("co_op_translator.api.translate_markdown_content", side_effect=provider):
+            docs.sync_docs(self.root, checkpoint_dir=checkpoint)
+            docs.check_outputs(self.root, files)
+            record = docs.load_checkpoint(checkpoint, "README.md", source.read_text(),
+                                          docs.checkpoint_digest(self.root))
+            self.assertIsNotNone(record)
+            self.assertNotIn("local-test-key", (checkpoint / "README.md.json").read_text())
+
+    def test_duplicate_code_and_link_markers_trigger_chunk_recovery(self):
+        from co_op_translator.core.llm.markdown_translator import MarkdownTranslator
+        chunk = "@@CODE_BLOCK_0@@\n[Link](@@LINK_DESTINATION_0@@)\n"
+        for marker in ["@@CODE_BLOCK_0@@", "@@LINK_DESTINATION_0@@"]:
+            with self.subTest(marker=marker):
+                calls = []
+
+                async def provider(self, content, *args, **kwargs):
+                    calls.append(content)
+                    return content.replace(marker, marker + marker) if len(calls) == 1 else content
+
+                with patch.object(MarkdownTranslator, "_translate_chunk_once", provider):
+                    docs.install_placeholder_guard()
+                    instance = SimpleNamespace(CHUNK_RETRY_ATTEMPTS=1)
+                    instance._translate_chunk_once = MethodType(MarkdownTranslator._translate_chunk_once, instance)
+                    result = asyncio.run(MarkdownTranslator._translate_chunk_with_recovery(
+                        instance, chunk, "en", "English", False, self.root / "Guide.md", "1", 1, 1, 0))
+                self.assertEqual(result, chunk)
+                self.assertEqual(len(calls), 2)
 
 
 if __name__ == "__main__":
