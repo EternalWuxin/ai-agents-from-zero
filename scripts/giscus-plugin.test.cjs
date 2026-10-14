@@ -38,6 +38,15 @@ assert.deepEqual(
 );
 
 assert.deepEqual(
+  resolveDiscussion(
+    "Chapter 1-1 LLM Understanding and Engineering Overview",
+    "title",
+    "#/translations/en/1-1-%E5%A4%A7%E6%A8%A1%E5%9E%8B%E8%AE%A4%E7%9F%A5%E4%B8%8E%E5%B7%A5%E7%A8%8B%E6%A6%82%E8%A7%88",
+  ),
+  { mapping: "number", term: "32" },
+);
+
+assert.deepEqual(
   resolveDiscussion("English home", "title", "#/translations/en/"),
   { mapping: "number", term: "5" },
 );
