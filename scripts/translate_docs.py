@@ -3,6 +3,7 @@
 import argparse
 import asyncio
 from collections import Counter
+from contextvars import ContextVar
 from datetime import datetime, timezone
 from functools import lru_cache
 import hashlib
@@ -34,7 +35,9 @@ NAV_END = "<!-- language-switch:end -->"
 NAV_PATTERN = re.compile(re.escape(NAV_START) + r".*?" + re.escape(NAV_END), re.S)
 PARSER = MarkdownIt("commonmark").enable("table")
 GENERATED_SIDEBAR = "_sidebar.en.md"
-PLACEHOLDERS = re.compile(r"@@(?:INLINE_CODE|CODE_BLOCK|LINK_DESTINATION)_\d+@@")
+PLACEHOLDERS = re.compile(r"@@(?:INLINE_CODE|CODE_BLOCK|HTML_CODE|LINK_DESTINATION)_\d+@@")
+HTML_CODE = re.compile(r"<(?P<tag>pre|code)\b[^>]*>.*?</(?P=tag)\s*>", re.I | re.S)
+DIAGNOSTICS = ContextVar("translation_diagnostics", default=None)
 FILE_ATTEMPTS = 3
 
 
@@ -105,11 +108,50 @@ class HtmlContent(HTMLParser):
         self.structure.append(("/" + tag, []))
 
 
+def html_code_matches(text):
+    matches = list(HTML_CODE.finditer(text))
+    if not matches:
+        return []
+    from co_op_translator.utils.markdown.spans import markdown_code_spans
+    spans = markdown_code_spans(text)
+    return [match for match in matches if not any(
+        span.start <= match.start() < span.end for span in spans)]
+
+
+def protect_html_code(text):
+    literals = {}
+    for match in reversed(html_code_matches(text)):
+        index = len(literals)
+        marker = f"@@HTML_CODE_{index}@@"
+        while marker in text or marker in literals:
+            index += 1
+            marker = f"@@HTML_CODE_{index}@@"
+        literals[marker] = match.group()
+        text = text[:match.start()] + marker + text[match.end():]
+    return text, literals
+
+
+def restore_html_code(text, literals):
+    for marker, literal in literals.items():
+        if text.count(marker) != 1:
+            raise TranslationValidationError(f"HTML code placeholder {marker} was lost or duplicated")
+        text = text.replace(marker, literal, 1)
+    return text
+
+
 def document_parts(text):
-    tokens = PARSER.parse(NAV_PATTERN.sub("", text))
+    text = NAV_PATTERN.sub("", text)
+    tokens = PARSER.parse(text)
+    html_code = html_code_matches(text)
     html = HtmlContent()
     links, inline_code, images = [], [], 0
+    inline_code_groups = []
     for token in tokens:
+        if token.type == "inline":
+            # English word order may change within a paragraph or table cell,
+            # but literals must not move to another Markdown text block.
+            inline_code_groups.append(Counter(child.content for child in token.children or []
+                                              if child.type == "code_inline"))
         if token.type == "html_block":
             html.feed(token.content)
         for child in token.children or []:
@@ -126,6 +168,10 @@ def document_parts(text):
         "headings": [t.tag for t in tokens if t.type == "heading_open"],
         "code": [(t.type, t.info, t.content) for t in tokens if t.type in {"fence", "code_block"}],
         "inline_code": inline_code,
+        "inline_code_groups": inline_code_groups,
+        "html_code": [match.group() for match in html_code if match['tag'].lower() == "pre"],
+        "html_inline_code": Counter(match.group() for match in html_code
+                                    if match['tag'].lower() == "code"),
         "table_rows": sum(t.type == "tr_open" for t in tokens),
         "images": images + html.images,
         "html": html.structure,
@@ -146,6 +192,7 @@ def protected_ranges(text):
     # Markdown inline code can span lines and use more than one backtick.
     for match in re.finditer(r"(?<!`)(`+)(?!`)(.*?)(?<!`)\1(?!`)", "".join(inline_text), re.S):
         ranges.append(match.span())
+    ranges.extend(match.span() for match in html_code_matches(text))
     return ranges
 
 
@@ -280,9 +327,10 @@ def validate_document(source_path, translated_path, root):
     before = document_parts(source_path.read_text())
     text = translated_path.read_text()
     after = document_parts(text)
-    for name in ("headings", "code", "inline_code", "table_rows", "images", "html"):
+    for name in ("headings", "code", "inline_code_groups", "html_code", "html_inline_code", "table_rows", "images", "html"):
         if before[name] != after[name]:
-            raise ValueError(f"{source_path.name}: translated {name} changed")
+            label = "inline_code" if name == "inline_code_groups" else name
+            raise ValueError(f"{source_path.name}: translated {label} changed")
     external = lambda links: Counter(url for url in links if url and
                                      (urlsplit(url).scheme or urlsplit(url).netloc))
     if external(before["links"]) != external(after["links"]):
@@ -480,6 +528,17 @@ def configure_deepseek(root):
     AsyncCompletions.create = create
 
 
+def save_rejected_translation(label, source, result, reason):
+    context = DIAGNOSTICS.get()
+    if context is None:
+        return
+    directory, name = context
+    label = re.sub(r"[^A-Za-z0-9_.-]", "_", label)
+    record = {"file": name, "chunk": label, "reason": redact_error(reason),
+              "source": redact_error(source), "result": redact_error(result)}
+    write_atomic(directory / f"{label}.json", json.dumps(record, ensure_ascii=False, indent=2) + "\n")
+
+
 def install_placeholder_guard():
     # Check literals before Co-op leaves its chunk-recovery loop. The upstream
     # final restore raises ValueError too late to retry or split a damaged chunk.
@@ -500,19 +559,23 @@ def install_placeholder_guard():
                              if expected[marker] != actual[marker])
             reason = f"changed protected placeholders: {', '.join(changed)}"
         else:
-            # Equal counts alone allow reordered literals or extra backticks
-            # around a marker. Reject these while chunk recovery can still run.
-            code_markers = re.compile(r"@@(?:INLINE_CODE|CODE_BLOCK)_\d+@@")
-            if code_markers.findall(chunk) != code_markers.findall(result):
-                reason = "reordered protected code placeholders"
+            # Preserve block-code order and each literal's source line, while
+            # allowing natural English word order within the same sentence.
+            blocks = re.compile(r"@@CODE_BLOCK_\d+@@")
+            marker_lines = lambda text: [Counter(PLACEHOLDERS.findall(line)) for line in text.splitlines()]
+            if blocks.findall(chunk) != blocks.findall(result):
+                reason = "reordered protected code blocks"
+            elif marker_lines(chunk) != marker_lines(result):
+                reason = "protected placeholders moved between source lines"
             else:
-                before, after = document_parts(chunk), document_parts(result)
-                for part in ("code", "inline_code"):
-                    if before[part] != after[part]:
-                        reason = f"changed unprotected {part} syntax (source={len(before[part])}, translated={len(after[part])})"
-                        break
+                # A fragment can start inside a list or HTML element. Parsing
+                # it as a complete Markdown document gives false code blocks.
+                ticks = lambda text: [Counter(re.findall(r"`+", line)) for line in text.splitlines()]
+                if ticks(chunk) != ticks(result):
+                    reason = "changed unprotected backtick syntax"
         if reason:
             # Do not print provider content or private connection settings.
+            save_rejected_translation(chunk_label, chunk, result, reason)
             print(f"Rejected translation chunk {md_file_path.name} ({chunk_label}): {reason}", flush=True)
             raise TranslationIncompleteError(f"{md_file_path.name}: chunk {chunk_label} {reason}")
         return result
@@ -523,15 +586,16 @@ def install_placeholder_guard():
 
 def validate_raw_translation(source_text, translated_text, name):
     before, after = document_parts(source_text), document_parts(translated_text)
-    for part in ("headings", "code", "inline_code", "table_rows", "images", "html"):
+    for part in ("headings", "code", "inline_code_groups", "html_code", "html_inline_code", "table_rows", "images", "html"):
         if before[part] != after[part]:
             detail = ""
-            if part == "inline_code":
-                missing = sum((Counter(before[part]) - Counter(after[part])).values())
-                added = sum((Counter(after[part]) - Counter(before[part])).values())
-                detail = (f" (source={len(before[part])}, translated={len(after[part])}, "
-                          f"missing={missing}, unexpected={added}, order_only={not missing and not added})")
-            raise TranslationValidationError(f"{name}: translated {part} changed{detail}")
+            if part == "inline_code_groups":
+                missing = sum((Counter(before["inline_code"]) - Counter(after["inline_code"])).values())
+                added = sum((Counter(after["inline_code"]) - Counter(before["inline_code"])).values())
+                detail = (f" (source={len(before['inline_code'])}, translated={len(after['inline_code'])}, "
+                          f"missing={missing}, unexpected={added}, block_scope_changed={not missing and not added})")
+            label = "inline_code" if part == "inline_code_groups" else part
+            raise TranslationValidationError(f"{name}: translated {label} changed{detail}")
     if Counter(before["links"]) != Counter(after["links"]):
         raise TranslationValidationError(f"{name}: translator changed link destinations")
     original_markers = Counter(PLACEHOLDERS.findall(source_text))
@@ -583,6 +647,7 @@ async def translate_documents(staging, pending, digest, checkpoint_dir, cache_di
 
     async def translate(name):
         async with semaphore:
+            DIAGNOSTICS.set((checkpoint_dir / "_rejected" / name, name))
             source = staging / name
             source_text = source.read_text()
             record = None if force else load_checkpoint(checkpoint_dir, name, source_text, cache_digest)
@@ -591,9 +656,14 @@ async def translate_documents(staging, pending, digest, checkpoint_dir, cache_di
                 print(f"Restored checkpoint: {name}", flush=True)
             else:
                 for attempt in range(1, FILE_ATTEMPTS + 1):
+                    text = None
                     try:
-                        text = await translate_markdown_content(source_text, "en", options={
-                            "source_path": source, "context": GLOSSARY.read_text()})
+                        protected, html_literals = protect_html_code(source_text)
+                        context = (GLOSSARY.read_text() + "\nKeep each @@HTML_CODE_n@@ marker exactly once on its source line. "
+                                   "Do not put backticks around any placeholder.\n")
+                        text = await translate_markdown_content(protected, "en", options={
+                            "source_path": source, "context": context})
+                        text = restore_html_code(text, html_literals)
                         validate_raw_translation(source_text, text, name)
                         record = {"schema_version": 1, "cache_hash": cache_digest,
                                   "source_hash": hashlib.sha256(source_text.encode()).hexdigest(),
@@ -604,6 +674,8 @@ async def translate_documents(staging, pending, digest, checkpoint_dir, cache_di
                         print(f"Translated and checkpointed: {name}", flush=True)
                         break
                     except Exception as error:
+                        if text is not None:
+                            save_rejected_translation("document", source_text, text, str(error))
                         retryable = isinstance(error, TranslationValidationError) or (
                             isinstance(error, ValueError) and "Expected code placeholder" in str(error))
                         if retryable and attempt < FILE_ATTEMPTS:
@@ -633,6 +705,29 @@ def prune_translations(root, files):
             (root / OUTPUT / name).unlink(missing_ok=True)
             del metadata[name]
     write_atomic(root / OUTPUT / METADATA, json.dumps(metadata, ensure_ascii=False, indent=2) + "\n")
+
+
+def probe_docs(root, names, checkpoint_dir=None):
+    """Validate representative translations without publishing English files."""
+    root = root.resolve()
+    if importlib.metadata.version("co-op-translator") != VERSION:
+        raise ValueError(f"Install scripts/translation-requirements.txt (Co-op Translator {VERSION})")
+    files = tuple(dict.fromkeys(names))
+    managed = set(discover_documents(root))
+    if not files or any(name not in managed for name in files):
+        raise ValueError("Probe documents must be Git-tracked source Markdown files")
+    directory = Path(checkpoint_dir).resolve() if checkpoint_dir is not None else checkpoint_directory(root)
+    digest = settings_digest(root)
+    print(f"Representative document preflight: {len(files)} document(s).", flush=True)
+    with tempfile.TemporaryDirectory(prefix="translate-docs-probe-") as temporary:
+        staging = Path(temporary).resolve()
+        snapshots = prepare_workspace(root, staging, files)
+        configure_deepseek(root)
+        asyncio.run(translate_documents(staging, files, digest, directory, checkpoint_digest(root)))
+        verify_sources_unchanged(root, snapshots)
+        if settings_digest(root) != digest:
+            raise RuntimeError("Translation settings changed during preflight")
+    print(f"Representative preflight passed: {len(files)} document(s); validated checkpoints retained, no English files published.", flush=True)
 
 
 def sync_docs(root, dry_run=False, force=False, checkpoint_dir=None):
@@ -720,6 +815,7 @@ def main():
     modes = args.add_mutually_exclusive_group()
     modes.add_argument("--check", action="store_true", help="Validate English docs without API calls")
     modes.add_argument("--dry-run", action="store_true", help="Preview translation volume without writing files")
+    modes.add_argument("--probe", nargs="+", metavar="SOURCE", help="Validate selected tracked documents and retain checkpoints without publishing")
     args.add_argument("--force", action="store_true", help="Regenerate all managed English docs")
     args.add_argument("--checkpoint-dir", type=Path, help="Persist validated raw translations for interrupted-run recovery")
     options = args.parse_args()
@@ -727,6 +823,8 @@ def main():
         root = options.root.resolve()
         if options.check:
             check_outputs(root)
+        elif options.probe:
+            probe_docs(root, options.probe, options.checkpoint_dir)
         else:
             sync_docs(root, options.dry_run, options.force, options.checkpoint_dir)
     except Exception as error:

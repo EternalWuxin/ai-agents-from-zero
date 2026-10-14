@@ -373,10 +373,101 @@ class TranslationSafetyTests(unittest.TestCase):
         self.assertEqual(calls, [1, 2, 2])
         self.assertEqual(result, chunks)
 
-    def test_reordered_code_markers_are_retried_even_when_the_counts_match(self):
+    def test_natural_english_can_reorder_inline_code_within_the_same_sentence(self):
         from co_op_translator.core.llm.markdown_translator import MarkdownTranslator
         from co_op_translator.utils.markdown import SPLIT_DELIMITER
-        original = "Use `first()` before `second()`.\n"
+        original = "输入 `question`，得到 `answer`。\n"
+        english = "The `answer` is produced from the `question`.\n"
+        calls = []
+
+        async def provider(self, prompt, index, total):
+            content = prompt.split(SPLIT_DELIMITER, 1)[1]
+            calls.append(content)
+            return content.replace("输入 @@INLINE_CODE_0@@，得到 @@INLINE_CODE_1@@。",
+                                   "The @@INLINE_CODE_1@@ is produced from the @@INLINE_CODE_0@@.")
+
+        with patch.object(MarkdownTranslator, "_translate_chunk_once", MarkdownTranslator._translate_chunk_once), \
+                patch.object(MarkdownTranslator, "_run_prompt", provider):
+            docs.install_placeholder_guard()
+            translator = type("Translator", (MarkdownTranslator,), {"_run_prompt": provider})()
+            result = asyncio.run(translator.translate_markdown(original, "en", self.root / "Guide.md"))
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(result, english)
+        docs.validate_raw_translation(original, result, "Guide.md")
+        (self.root / "Guide.md").write_text(original)
+        (self.output / "Guide.md").write_text(result)
+        docs.validate_document(self.root / "Guide.md", self.output / "Guide.md", self.root)
+
+    def test_inline_code_cannot_move_between_paragraphs_or_table_cells(self):
+        pairs = [
+            ("Use `first`.\n\nThen `second`.\n", "Use `second`.\n\nThen `first`.\n"),
+            ("| Input | Output |\n| --- | --- |\n| `question` | `answer` |\n",
+             "| Input | Output |\n| --- | --- |\n| `answer` | `question` |\n"),
+        ]
+        for source, translated in pairs:
+            with self.subTest(source=source), self.assertRaisesRegex(ValueError, "inline_code"):
+                docs.validate_raw_translation(source, translated, "Guide.md")
+
+    def test_changed_html_code_is_rejected(self):
+        for element in ("pre", "code"):
+            source = f"<{element}>print('safe')</{element}>\n"
+            translated = source.replace("'safe'", "'changed'")
+            with self.subTest(element=element), self.assertRaisesRegex(ValueError, "html.*code"):
+                docs.validate_raw_translation(source, translated, "Guide.md")
+
+    def test_html_code_is_hidden_from_translation_and_restored_verbatim(self):
+        original = ('# 文档\n\n<details>\n<summary>中文说明</summary>\n'
+                    '<pre><code style="white-space: pre-wrap;">{\n'
+                    '  "content": "中文数据",\n  "role": "assistant"\n}\n</code></pre>\n'
+                    '</details>\n\n使用 <code>保持原样</code>。\n')
+        (self.root / "Guide.md").write_text(original)
+        inputs = []
+
+        async def provider(text, *args, **kwargs):
+            inputs.append(text)
+            return text.replace("中文说明", "Explanation").replace("中文数据", "damaged data").replace(
+                "保持原样", "damaged literal")
+
+        with patch("co_op_translator.api.translate_markdown_content", provider):
+            asyncio.run(docs.translate_documents(self.root, ("Guide.md",), "settings",
+                                                self.root / "checkpoints", "cache"))
+        result = (self.output / "Guide.md").read_text()
+        self.assertNotIn("中文数据", inputs[0])
+        self.assertNotIn("保持原样", inputs[0])
+        self.assertEqual(result, original.replace("中文说明", "Explanation"))
+        docs.validate_raw_translation(original, result, "Guide.md")
+
+    def test_html_code_examples_keep_their_literal_link_destinations(self):
+        (self.root / "Guide.md").write_text("# Guide\n")
+        text = '<pre><code>[example](Guide.md)</code></pre>\n'
+        result = docs.repair_local_links(text, self.output / "README.md", self.root)
+        self.assertEqual(result, text)
+
+    def test_indented_list_fragment_can_translate_prose_without_becoming_code(self):
+        from co_op_translator.core.llm.markdown_translator import MarkdownTranslator
+        from co_op_translator.utils.markdown import SPLIT_DELIMITER
+        chunk = "    这是列表中的说明。\n"
+
+        async def provider(self, prompt, index, total):
+            return prompt.split(SPLIT_DELIMITER, 1)[1].replace("这是列表中的说明。", "Explanation in a list.")
+
+        with patch.object(MarkdownTranslator, "_translate_chunk_once", MarkdownTranslator._translate_chunk_once):
+            docs.install_placeholder_guard()
+            translator = type("Translator", (MarkdownTranslator,), {"_run_prompt": provider})()
+            result = asyncio.run(translator._translate_chunk_with_recovery(
+                chunk, "en", "English", False, self.root / "Guide.md", "1", 1, 1, 0))
+        self.assertEqual(result, "    Explanation in a list.\n")
+
+    def test_html_tags_inside_markdown_code_are_not_protected_twice(self):
+        text = '`<code>literal</code>`\n\n```html\n<pre>示例</pre>\n```\n'
+        protected, literals = docs.protect_html_code(text)
+        self.assertEqual(protected, text)
+        self.assertEqual(literals, {})
+
+    def test_code_markers_cannot_move_between_source_lines(self):
+        from co_op_translator.core.llm.markdown_translator import MarkdownTranslator
+        from co_op_translator.utils.markdown import SPLIT_DELIMITER
+        original = "First `input`.\n\nSecond `output`.\n"
         calls = []
 
         async def provider(self, prompt, index, total):
@@ -387,13 +478,61 @@ class TranslationSafetyTests(unittest.TestCase):
                     "@@INLINE_CODE_1@@", "@@INLINE_CODE_0@@").replace("@@SWAP@@", "@@INLINE_CODE_1@@")
             return content
 
-        with patch.object(MarkdownTranslator, "_translate_chunk_once", MarkdownTranslator._translate_chunk_once), \
-                patch.object(MarkdownTranslator, "_run_prompt", provider):
+        with patch.object(MarkdownTranslator, "_translate_chunk_once", MarkdownTranslator._translate_chunk_once):
             docs.install_placeholder_guard()
             translator = type("Translator", (MarkdownTranslator,), {"_run_prompt": provider})()
             result = asyncio.run(translator.translate_markdown(original, "en", self.root / "Guide.md"))
         self.assertEqual(len(calls), 2)
         self.assertEqual(result, original)
+
+    def test_probe_reuses_checkpoints_and_never_publishes_unvalidated_results(self):
+        files = ("Good.md", "Bad.md")
+        for name in files:
+            (self.root / name).write_text("# Guide\n\nUse `safe`.\n")
+        (self.output / "Good.md").write_text("Accepted English.\n")
+        calls = []
+
+        async def provider(text, language, options):
+            name = options["source_path"].name
+            calls.append(name)
+            if name == "Bad.md":
+                raise RuntimeError("simulated provider failure")
+            return text
+
+        with patch.object(docs, "discover_documents", return_value=files), \
+                patch.object(docs, "configure_deepseek"), \
+                patch("co_op_translator.api.translate_markdown_content", provider):
+            docs.probe_docs(self.root, ("Good.md",), self.root / "checkpoints")
+            calls.clear()
+            with self.assertRaisesRegex(RuntimeError, "Bad.md"):
+                docs.probe_docs(self.root, files, self.root / "checkpoints")
+        self.assertEqual(calls, ["Bad.md"])
+        self.assertEqual((self.output / "Good.md").read_text(), "Accepted English.\n")
+        self.assertTrue((self.root / "checkpoints/Good.md.json").exists())
+        self.assertFalse((self.output / "Bad.md").exists())
+
+    def test_rejected_samples_redact_secrets_and_preserve_accepted_outputs(self):
+        source = "# Guide\n\nUse `safe`.\nprivate-key https://private.invalid/v1 private-model\n"
+        (self.root / "Guide.md").write_text(source)
+        (self.output / "Guide.md").write_text("Accepted English.\n")
+
+        async def provider(text, *args, **kwargs):
+            return text.replace("`safe`", "`changed`")
+
+        with patch.dict(os.environ, {"DEEPSEEK_API_KEY": "private-key",
+                                    "DEEPSEEK_BASE_URL": "https://private.invalid/v1",
+                                    "DEEPSEEK_MODEL": "private-model"}), \
+                patch.object(docs, "FILE_ATTEMPTS", 1), \
+                patch("co_op_translator.api.translate_markdown_content", provider):
+            with self.assertRaises(RuntimeError):
+                asyncio.run(docs.translate_documents(self.root, ("Guide.md",), "settings",
+                                                    self.root / "checkpoints", "cache"))
+        sample = (self.root / "checkpoints/_rejected/Guide.md/document.json").read_text()
+        for private in ("private-key", "private.invalid", "private-model"):
+            self.assertNotIn(private, sample)
+        self.assertIn("[redacted]", sample)
+        self.assertEqual((self.output / "Guide.md").read_text(), "Accepted English.\n")
+        self.assertFalse((self.root / "checkpoints/Guide.md.json").exists())
 
     def test_damaged_markers_cause_smaller_chunks_after_bounded_retries(self):
         from co_op_translator.core.llm.markdown_translator import MarkdownTranslator
