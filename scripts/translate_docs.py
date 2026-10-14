@@ -494,11 +494,27 @@ def install_placeholder_guard():
                                 md_file_path, chunk_label, index, total)
         expected = Counter(PLACEHOLDERS.findall(chunk))
         actual = Counter(PLACEHOLDERS.findall(result))
+        reason = None
         if expected != actual:
             changed = sorted(marker for marker in expected.keys() | actual.keys()
                              if expected[marker] != actual[marker])
-            raise TranslationIncompleteError(
-                f"{md_file_path.name}: chunk {chunk_label} changed protected placeholders: {', '.join(changed)}")
+            reason = f"changed protected placeholders: {', '.join(changed)}"
+        else:
+            # Equal counts alone allow reordered literals or extra backticks
+            # around a marker. Reject these while chunk recovery can still run.
+            code_markers = re.compile(r"@@(?:INLINE_CODE|CODE_BLOCK)_\d+@@")
+            if code_markers.findall(chunk) != code_markers.findall(result):
+                reason = "reordered protected code placeholders"
+            else:
+                before, after = document_parts(chunk), document_parts(result)
+                for part in ("code", "inline_code"):
+                    if before[part] != after[part]:
+                        reason = f"changed unprotected {part} syntax (source={len(before[part])}, translated={len(after[part])})"
+                        break
+        if reason:
+            # Do not print provider content or private connection settings.
+            print(f"Rejected translation chunk {md_file_path.name} ({chunk_label}): {reason}", flush=True)
+            raise TranslationIncompleteError(f"{md_file_path.name}: chunk {chunk_label} {reason}")
         return result
 
     guarded._checks_translation_placeholders = True
@@ -509,7 +525,13 @@ def validate_raw_translation(source_text, translated_text, name):
     before, after = document_parts(source_text), document_parts(translated_text)
     for part in ("headings", "code", "inline_code", "table_rows", "images", "html"):
         if before[part] != after[part]:
-            raise TranslationValidationError(f"{name}: translated {part} changed")
+            detail = ""
+            if part == "inline_code":
+                missing = sum((Counter(before[part]) - Counter(after[part])).values())
+                added = sum((Counter(after[part]) - Counter(before[part])).values())
+                detail = (f" (source={len(before[part])}, translated={len(after[part])}, "
+                          f"missing={missing}, unexpected={added}, order_only={not missing and not added})")
+            raise TranslationValidationError(f"{name}: translated {part} changed{detail}")
     if Counter(before["links"]) != Counter(after["links"]):
         raise TranslationValidationError(f"{name}: translator changed link destinations")
     original_markers = Counter(PLACEHOLDERS.findall(source_text))

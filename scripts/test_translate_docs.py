@@ -329,6 +329,72 @@ class TranslationSafetyTests(unittest.TestCase):
         self.assertEqual(result, chunk)
         self.assertEqual(len(calls), 2)
 
+    def test_backticks_added_around_a_placeholder_are_retried_before_restoration(self):
+        from co_op_translator.core.llm.markdown_translator import MarkdownTranslator
+        from co_op_translator.utils.markdown import SPLIT_DELIMITER
+        original = "# Guide\n\nUse `safe()` and `argument`.\n"
+        calls = []
+
+        async def provider(self, prompt, index, total):
+            content = prompt.split(SPLIT_DELIMITER, 1)[1]
+            calls.append(content)
+            if len(calls) == 1:
+                return content.replace("@@INLINE_CODE_0@@", "`@@INLINE_CODE_0@@`")
+            return content
+
+        with patch.object(MarkdownTranslator, "_translate_chunk_once", MarkdownTranslator._translate_chunk_once), \
+                patch.object(MarkdownTranslator, "_run_prompt", provider):
+            docs.install_placeholder_guard()
+            translator = type("Translator", (MarkdownTranslator,), {"_run_prompt": provider})()
+            result = asyncio.run(translator.translate_markdown(original, "en", self.root / "Guide.md"))
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(result, original)
+        docs.validate_raw_translation(original, result, "Guide.md")
+
+    def test_new_inline_code_is_retried_without_retranslating_completed_chunks(self):
+        from co_op_translator.core.llm.markdown_translator import MarkdownTranslator
+        from co_op_translator.utils.markdown import SPLIT_DELIMITER
+        chunks = ["First paragraph.\n", "Second paragraph with @@INLINE_CODE_0@@.\n"]
+        calls = []
+
+        async def provider(self, prompt, index, total):
+            content = prompt.split(SPLIT_DELIMITER, 1)[1]
+            calls.append(index)
+            if index == 2 and calls.count(2) == 1:
+                return content.replace("Second paragraph", "Second `paragraph`")
+            return content
+
+        with patch.object(MarkdownTranslator, "_translate_chunk_once", MarkdownTranslator._translate_chunk_once), \
+                patch.object(MarkdownTranslator, "_run_prompt", provider):
+            docs.install_placeholder_guard()
+            translator = type("Translator", (MarkdownTranslator,), {"_run_prompt": provider})()
+            result = asyncio.run(translator._translate_chunks_with_recovery(
+                chunks, "en", "English", False, self.root / "Guide.md"))
+        self.assertEqual(calls, [1, 2, 2])
+        self.assertEqual(result, chunks)
+
+    def test_reordered_code_markers_are_retried_even_when_the_counts_match(self):
+        from co_op_translator.core.llm.markdown_translator import MarkdownTranslator
+        from co_op_translator.utils.markdown import SPLIT_DELIMITER
+        original = "Use `first()` before `second()`.\n"
+        calls = []
+
+        async def provider(self, prompt, index, total):
+            content = prompt.split(SPLIT_DELIMITER, 1)[1]
+            calls.append(content)
+            if len(calls) == 1:
+                return content.replace("@@INLINE_CODE_0@@", "@@SWAP@@").replace(
+                    "@@INLINE_CODE_1@@", "@@INLINE_CODE_0@@").replace("@@SWAP@@", "@@INLINE_CODE_1@@")
+            return content
+
+        with patch.object(MarkdownTranslator, "_translate_chunk_once", MarkdownTranslator._translate_chunk_once), \
+                patch.object(MarkdownTranslator, "_run_prompt", provider):
+            docs.install_placeholder_guard()
+            translator = type("Translator", (MarkdownTranslator,), {"_run_prompt": provider})()
+            result = asyncio.run(translator.translate_markdown(original, "en", self.root / "Guide.md"))
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(result, original)
+
     def test_damaged_markers_cause_smaller_chunks_after_bounded_retries(self):
         from co_op_translator.core.llm.markdown_translator import MarkdownTranslator
         chunk = "@@INLINE_CODE_0@@\n@@INLINE_CODE_1@@\n"
