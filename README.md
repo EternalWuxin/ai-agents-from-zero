@@ -19,7 +19,7 @@
 [![GitHub](https://img.shields.io/badge/GitHub-Project-181717?logo=github&logoColor=white)](https://github.com/didilili/ai-agents-from-zero/)
 [![Read Online](https://img.shields.io/badge/在线阅读-点击访问-blue?logo=bookstack)](https://didilili.github.io/ai-agents-from-zero/#/)
 
-[快速开始](#quick-start) • [教程大纲](教程目录大纲.md) • [案例汇总](教程案例链接汇总.md#教程案例链接汇总源码与在线演示) • [更新日志](教程更新日志.md) • [面试题库](AI智能体与大模型应用开发面试题库.md) • [新手入门与常见问题](新手入门与常见问题.md)
+[快速开始](#quick-start) • [教程大纲](教程目录大纲.md) • [更新日志](教程更新日志.md) • [面试题库](AI智能体与大模型应用开发面试题库.md) • [加入社群](#community)
 
   <p>
     <a href="https://didilili.github.io/ai-agents-from-zero/#/">📚 在线阅读</a>
@@ -216,9 +216,15 @@
 
 ---
 
-## 💬 交流社群
+<a id="community"></a>
 
-想和更多读者共同交流 **AI 编程、Agent / RAG 实战、面试经验**？欢迎到 [GitHub 入群申请帖](https://github.com/didilili/ai-agents-from-zero/issues/46) 留言申请加入微信交流群。
+## 💬 加入社群
+
+想和更多朋友聊聊 **AI 编程、Vibe Coding、面试经验，顺便 吹水唠嗑、吐槽老板**？欢迎加入「**全宇宙最有爱的 AI Agent 交流群 —— 胡思妙想研究所**」！🎉
+
+👉 [猛击这里！申请入所](https://github.com/didilili/ai-agents-from-zero/issues/46)：在申请帖留言，并按帖内说明添加微信。
+
+愿我们在这里少一点焦虑，多一点灵感；少一点单打独斗，多一点一起胡思妙想～
 
 ---
 
