@@ -10,7 +10,7 @@
 
 **学习建议：** 这一章是三块基础能力的接线图：Embedding 负责把文本变向量，MySQL 负责存和查结构化数据，日志负责让你知道系统跑到哪一步。读代码时别只看封装类本身，要追它们在哪里初始化、如何注入到业务层、出了错能不能通过日志定位到请求。
 
-**对应代码分支：** `06-mysql-embedding-log`
+**对应代码分支：** `06-embedding-mysql-logging`
 
 ---
 
@@ -140,6 +140,7 @@ BAAI/bge-large-zh-v1.5
 import asyncio
 from typing import Optional
 
+from huggingface_hub import AsyncInferenceClient, InferenceClient
 from langchain_huggingface import HuggingFaceEndpointEmbeddings
 
 from app.conf.app_config import EmbeddingConfig, app_config
@@ -158,7 +159,11 @@ class EmbeddingClientManager:
 
     def init(self):
         # 在应用启动阶段显式调用，完成真正的客户端初始化
-        self.client = HuggingFaceEndpointEmbeddings(model=self._get_url())
+        # LangChain 的 model 参数使用模型 ID，本地 TEI 地址交给底层推理客户端
+        self.client = HuggingFaceEndpointEmbeddings(model=self.config.model)
+        endpoint_url = f"{self._get_url()}/embed"
+        self.client.client = InferenceClient(model=endpoint_url)
+        self.client.async_client = AsyncInferenceClient(model=endpoint_url)
 
 
 # 模块级单例，供其他模块按需复用同一个客户端管理器
@@ -233,10 +238,13 @@ def _get_url(self):
 
 ```python
 def init(self):
-    self.client = HuggingFaceEndpointEmbeddings(model=self._get_url())
+    self.client = HuggingFaceEndpointEmbeddings(model=self.config.model)
+    endpoint_url = f"{self._get_url()}/embed"
+    self.client.client = InferenceClient(model=endpoint_url)
+    self.client.async_client = AsyncInferenceClient(model=endpoint_url)
 ```
 
-这里最值得注意的是：`model=` 传进去的并不是 Hugging Face 上的模型名称，而是**本地已经部署好的 Embedding 服务地址**。
+这里需要区分**模型 ID**和**服务地址**：`HuggingFaceEndpointEmbeddings(model=...)` 使用配置里的模型 ID，例如 `BAAI/bge-large-zh-v1.5`；底层的 `InferenceClient` 和 `AsyncInferenceClient` 则使用本地 TEI 的 `/embed` 地址，例如 `http://localhost:8081/embed`。
 
 也就是说，这个客户端的调用方式可以理解成：
 
