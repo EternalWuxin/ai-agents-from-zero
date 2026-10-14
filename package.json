@@ -7,8 +7,10 @@
   "scripts": {
     "format": "prettier --write package.json \"scripts/**/*.{js,cjs,mjs}\"",
     "format:check": "prettier --check package.json \"scripts/**/*.{js,cjs,mjs}\"",
+    "giscus:sync": "node scripts/sync-giscus-discussions.cjs",
     "prepare": "husky",
     "serve": "node scripts/serve-docs.cjs",
+    "test:giscus": "node scripts/giscus-plugin.test.cjs",
     "format:md": "prettier --write \"**/*.md\"",
     "format:md:check": "prettier --check \"**/*.md\""
   },
