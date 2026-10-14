@@ -5,6 +5,8 @@ const path = require("node:path");
 const DEFAULT_REPOSITORY = "didilili/ai-agents-from-zero";
 const START_MARKER = "  // giscus-discussions:start";
 const END_MARKER = "  // giscus-discussions:end";
+const ROUTES_START_MARKER = "  // giscus-routes:start";
+const ROUTES_END_MARKER = "  // giscus-routes:end";
 
 const DISCUSSIONS_QUERY = `
   query($owner: String!, $name: String!, $after: String) {
@@ -78,24 +80,111 @@ function selectDiscussionNumbers(discussions) {
   };
 }
 
-function replaceDiscussionNumbers(source, discussionNumbers) {
-  const start = source.indexOf(START_MARKER);
-  const end = source.indexOf(END_MARKER);
+function replaceGeneratedMap(
+  source,
+  startMarker,
+  endMarker,
+  variableName,
+  map,
+) {
+  const start = source.indexOf(startMarker);
+  const end = source.indexOf(endMarker);
 
   if (start === -1 || end === -1 || end <= start) {
-    throw new Error(
-      "Could not find the generated giscus discussion map markers",
-    );
+    throw new Error(`Could not find the generated ${variableName} map markers`);
   }
 
-  const serialized = JSON.stringify(discussionNumbers, null, 2)
+  const serialized = JSON.stringify(map, null, 2)
     .split("\n")
     .map((line, index) => (index === 0 ? line : `  ${line}`))
     .join("\n");
-  const generated = `${START_MARKER}\n  var discussionNumbers = ${serialized};\n${END_MARKER}`;
+  const generated = `${startMarker}\n  var ${variableName} = ${serialized};\n${endMarker}`;
 
   return (
-    source.slice(0, start) + generated + source.slice(end + END_MARKER.length)
+    source.slice(0, start) + generated + source.slice(end + endMarker.length)
+  );
+}
+
+function replaceDiscussionNumbers(source, discussionNumbers) {
+  return replaceGeneratedMap(
+    source,
+    START_MARKER,
+    END_MARKER,
+    "discussionNumbers",
+    discussionNumbers,
+  );
+}
+
+function replaceDiscussionRoutes(source, discussionRoutes) {
+  return replaceGeneratedMap(
+    source,
+    ROUTES_START_MARKER,
+    ROUTES_END_MARKER,
+    "discussionRoutes",
+    discussionRoutes,
+  );
+}
+
+function normalizeSidebarRoute(href) {
+  let route = String(href || "").trim();
+  if (!route || /^(?:https?:|mailto:|#)/i.test(route)) return null;
+
+  route = route.split("?")[0].split("#")[0].replace(/^\/+/, "");
+  try {
+    route = decodeURIComponent(route);
+  } catch (_error) {
+    // Keep the original route when it contains malformed escape sequences.
+  }
+
+  route = route.replace(/^translations\/en\/?/, "");
+  if (!route || route.endsWith("/")) route += "README.md";
+
+  return route;
+}
+
+function parseSidebarLinks(source) {
+  const links = [];
+  const pattern = /\[([^\]]+)\]\(([^)]+)\)/g;
+  let match;
+
+  while ((match = pattern.exec(source))) {
+    const route = normalizeSidebarRoute(match[2]);
+    if (route) links.push({ title: match[1].trim(), route });
+  }
+
+  return links;
+}
+
+function buildDiscussionRoutes(
+  chineseSidebar,
+  englishSidebar,
+  discussionNumbers,
+  overrides = {},
+) {
+  const englishTitles = new Map(
+    parseSidebarLinks(englishSidebar).map(({ route, title }) => [route, title]),
+  );
+  const routeNumbers = new Map();
+
+  for (const { route, title } of parseSidebarLinks(chineseSidebar)) {
+    const englishTitle = englishTitles.get(route);
+    const number =
+      discussionNumbers[title] ||
+      (englishTitle ? discussionNumbers[englishTitle] : undefined);
+    if (number) routeNumbers.set(route, number);
+  }
+
+  for (const [route, number] of Object.entries(overrides)) {
+    routeNumbers.set(route, number);
+  }
+
+  return Object.fromEntries(
+    [...routeNumbers]
+      .sort(
+        ([leftRoute, leftNumber], [rightRoute, rightNumber]) =>
+          leftNumber - rightNumber || leftRoute.localeCompare(rightRoute),
+      )
+      .map(([route, number]) => [route, number]),
   );
 }
 
@@ -154,15 +243,24 @@ function syncDiscussionNumbers() {
   const repository = process.env.GISCUS_REPO || DEFAULT_REPOSITORY;
   const discussions = fetchDiscussions(repository);
   const selection = selectDiscussionNumbers(discussions);
+  const discussionRoutes = buildDiscussionRoutes(
+    fs.readFileSync(path.join(root, "_sidebar.md"), "utf8"),
+    fs.readFileSync(path.join(root, "_sidebar.en.md"), "utf8"),
+    selection.discussionNumbers,
+    { "README.md": 5 },
+  );
   const source = fs.readFileSync(pluginPath, "utf8");
-  const updated = replaceDiscussionNumbers(source, selection.discussionNumbers);
+  const updated = replaceDiscussionRoutes(
+    replaceDiscussionNumbers(source, selection.discussionNumbers),
+    discussionRoutes,
+  );
 
   if (updated !== source) {
     fs.writeFileSync(pluginPath, updated);
   }
 
   console.log(
-    `Synced ${Object.keys(selection.discussionNumbers).length} discussion mappings from ${repository}.`,
+    `Synced ${Object.keys(selection.discussionNumbers).length} discussion titles and ${Object.keys(discussionRoutes).length} shared routes from ${repository}.`,
   );
 
   for (const duplicate of selection.duplicates) {
@@ -173,8 +271,11 @@ function syncDiscussionNumbers() {
 }
 
 module.exports = {
+  buildDiscussionRoutes,
   fetchDiscussions,
+  normalizeSidebarRoute,
   replaceDiscussionNumbers,
+  replaceDiscussionRoutes,
   selectDiscussionNumbers,
   syncDiscussionNumbers,
 };

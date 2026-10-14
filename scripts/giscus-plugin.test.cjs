@@ -28,6 +28,20 @@ assert.deepEqual(
   { mapping: "number", term: "141" },
 );
 
+assert.deepEqual(
+  resolveDiscussion(
+    "Chapter 20 MCP Model Context Protocol",
+    "title",
+    "#/translations/en/20-MCP%E6%A8%A1%E5%9E%8B%E4%B8%8A%E4%B8%8B%E6%96%87%E5%8D%8F%E8%AE%AE.md",
+  ),
+  { mapping: "number", term: "136" },
+);
+
+assert.deepEqual(
+  resolveDiscussion("English home", "title", "#/translations/en/"),
+  { mapping: "number", term: "5" },
+);
+
 assert.deepEqual(resolveDiscussion("尚未建立讨论的新页面", "title"), {
   mapping: "title",
 });
@@ -71,6 +85,21 @@ assert.deepEqual(selection.discussionNumbers, {
 assert.deepEqual(selection.duplicates, [
   { title: "重复页面", selected: 141, skipped: [50] },
 ]);
+
+assert.equal(
+  typeof syncModule.buildDiscussionRoutes,
+  "function",
+  "the sync script should build shared routes for translated pages",
+);
+
+assert.deepEqual(
+  syncModule.buildDiscussionRoutes(
+    "- [第 20 章 MCP 模型上下文协议](20-MCP模型上下文协议.md)",
+    "- [Chapter 20 MCP Model Context Protocol](/translations/en/20-MCP%E6%A8%A1%E5%9E%8B%E4%B8%8A%E4%B8%8B%E6%96%87%E5%8D%8F%E8%AE%AE.md)",
+    { "第 20 章 MCP 模型上下文协议": 136 },
+  ),
+  { "20-MCP模型上下文协议.md": 136 },
+);
 
 const sourceWithGeneratedMap = [
   "before",
